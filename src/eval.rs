@@ -1,4 +1,5 @@
 use crate::load;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time;
 
@@ -16,7 +17,7 @@ pub fn score(answer: &str, predict: &str) -> (usize, f64) {
     }
 }
 
-pub fn score_list(answer: &[&str], predict: &[&str]) -> (f64, f64) {
+pub fn score_list(answer: &[String], predict: &[String]) -> (f64, f64) {
     assert!(answer.len() == predict.len());
     let (mut a, mut b) = (0.0, 0.0);
     answer.iter().zip(predict).for_each(|(x, y)| {
@@ -37,6 +38,31 @@ pub struct PinyinIME {
     gram_2: HashMap<(usize, usize), f64>,
     gram_3: HashMap<(usize, usize, usize), f64>,
     gram_4: HashMap<(usize, usize, usize, usize), f64>,
+}
+
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+struct State {
+    pub pos: usize,        // position of next word's beginning
+    pub w1: Option<usize>, // last and nearest word
+    pub w2: Option<usize>, // ahead of w1
+    pub w3: Option<usize>, // ahead of w2
+    pub p: f64,            // prob
+}
+
+impl Eq for State {}
+
+impl Ord for State {
+    fn cmp(&self, rhs: &Self) -> Ordering {
+        self.p.partial_cmp(&rhs.p).unwrap()
+    }
+}
+
+impl PinyinIME {
+    pub fn eval(&self, pinyin: &str) -> String {
+        let items: Vec<_> = pinyin.split_whitespace().collect();
+
+        String::new()
+    }
 }
 
 impl Default for PinyinIME {

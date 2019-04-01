@@ -57,6 +57,7 @@ pub fn load_word(
     });
     x.shrink_to_fit();
     y.shrink_to_fit();
+    py.shrink_to_fit();
     println!("...Loaded!");
     (x, y, py)
 }
@@ -111,6 +112,10 @@ pub fn load_gram(
             },
         );
     }
+    gram_1.shrink_to_fit();
+    gram_2.shrink_to_fit();
+    gram_3.shrink_to_fit();
+    gram_4.shrink_to_fit();
     println!("...Loaded!");
     (gram_1, gram_2, gram_3, gram_4)
 }
