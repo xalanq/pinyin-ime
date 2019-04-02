@@ -71,6 +71,7 @@ fn gen_gram_one(
     hanzi_m: &HashMap<char, usize>,
     word_m: &HashMap<Vec<usize>, usize>,
     jb: &Jieba,
+    limit: usize,
 ) {
     println!("...Working on {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
@@ -78,7 +79,6 @@ fn gen_gram_one(
     let mut pb = ProgressBar::new(iter.next().unwrap().unwrap().parse().unwrap());
     pb.set_max_refresh_rate(Some(Duration::from_secs(1)));
     let mut gc = 0;
-    let limit = 5;
     macro_rules! gc {
         () => {
             gram_1.retain(|_, v| *v >= limit);
@@ -117,6 +117,7 @@ pub fn gen_gram(
     word_m: &HashMap<Vec<usize>, usize>,
     pinyin_m: &HashMap<String, Vec<usize>>,
     jb: &Jieba,
+    gc: usize,
 ) {
     println!("Generating gram-n");
     let paths = fs::read_dir(path).unwrap();
@@ -136,6 +137,7 @@ pub fn gen_gram(
                 hanzi_m,
                 word_m,
                 jb,
+                gc,
             );
         }
     }
@@ -337,7 +339,9 @@ pub fn gen_total_gram(path: &str) {
                 gram[i]
                     .iter()
                     .fold(&mut String::new(), |s, (a, b)| {
-                        s.push_str(&format!("{} {}\n", a.join(" "), b));
+                        if !(i != 0 && *b == 0.0) {
+                            s.push_str(&format!("{} {}\n", a.join(" "), b));
+                        }
                         s
                     })
                     .as_bytes(),
@@ -477,6 +481,29 @@ pub fn gen_jieba_dict(save_path: &str, hanzi_v: &Vec<char>, word_v: &Vec<Vec<usi
     println!("...Done!");
 }
 
+pub fn gen_sen<F>(path: &str, save_path: &str, hanzi_m: &HashMap<char, usize>, gen_sen_one: F)
+where
+    F: Fn(&str, &mut String, &HashMap<char, usize>) -> usize,
+{
+    println!("Generating sina sentence");
+    let paths = fs::read_dir(path).unwrap();
+    let mut data = String::new();
+    let mut count = 0;
+    for path in paths {
+        let path = path.unwrap();
+        if path.metadata().unwrap().is_file() {
+            count += gen_sen_one(&path.path().display().to_string(), &mut data, hanzi_m);
+        }
+        println!("......total len: {}\n......total line: {}", data.len(), count);
+    }
+    let errmsg = &format!("...Cannot save to {}", save_path);
+    let mut file = File::create(save_path).expect(errmsg);
+    println!("...writing to {}", save_path);
+    file.write(format!("{}\n", count).as_bytes()).expect(errmsg);
+    file.write_all(data.as_bytes()).expect(errmsg);
+    println!("...Done!");
+}
+
 fn kth<T>(a: &mut Vec<(T, usize)>, k: usize) {
     if a.len() == 0 {
         return;
@@ -500,4 +527,53 @@ fn kth<T>(a: &mut Vec<(T, usize)>, k: usize) {
             l = pos + 1;
         }
     }
+}
+
+pub fn line_filter(s: &str, hanzi_m: &HashMap<char, usize>) -> String {
+    let mut len = 0;
+    let mut valid = false;
+    let s: Vec<_> = s.chars().collect();
+    let mut data = String::new();
+    let mut i = 0;
+    while i < s.len() {
+        let mut c = s[i];
+        if c.is_digit(10) {
+            // use last digit
+            while i + 1 < s.len() && s[i + 1].is_digit(10) {
+                i += 1;
+            }
+            c = match s[i] {
+                '0' => '〇',
+                '1' => '一',
+                '2' => '二',
+                '3' => '三',
+                '4' => '四',
+                '5' => '五',
+                '6' => '六',
+                '7' => '七',
+                '8' => '八',
+                '9' => '九',
+                _ => s[i],
+            };
+        }
+        if let Some(_) = hanzi_m.get(&c) {
+            if len == 0 && valid {
+                data.push(' ');
+            }
+            valid = true;
+            data.push(c);
+            len += 1;
+        } else if c.is_alphabetic() {
+            if len == 0 && valid {
+                data.push(' ');
+            }
+            valid = true;
+            data.push('_'); // unknown
+            len += 1;
+        } else {
+            len = 0;
+        }
+        i += 1;
+    }
+    data
 }
