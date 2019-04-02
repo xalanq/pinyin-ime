@@ -1,7 +1,10 @@
 use jieba_rs::Jieba;
+use rayon::prelude::*;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::BufReader;
+use std::sync::Mutex;
 
 pub fn load_hanzi(path: &str) -> (Vec<char>, HashMap<char, usize>) {
     println!("Loading hanzi from {}", path);
@@ -84,11 +87,12 @@ pub fn load_gram(
     // HashMap<(usize, usize, usize, usize), f64>,
 ) {
     println!("Loading gram");
-    let mut gram_1 = HashMap::new();
-    let mut gram_2 = HashMap::new();
-    let mut gram_3 = HashMap::new();
-    // let mut gram_4 = HashMap::new();
-    for i in 0..3 {
+    let mut gram_1 = Mutex::new(HashMap::new());
+    let mut gram_2 = Mutex::new(HashMap::new());
+    let mut gram_3 = Mutex::new(HashMap::new());
+    // let mut gram_4 = Mutex::new(HashMap::new());
+    let ids = [0, 1, 2];
+    ids.par_iter().for_each(|i| {
         // for i in 0..4 {
         let fname = &format!("{}/gram_{}.txt", path, i + 1);
         println!("...Working on {}", fname);
@@ -102,10 +106,13 @@ pub fn load_gram(
                 let data: Vec<_> = line.split_whitespace().collect();
                 let num = data[data.len() - 1].parse::<f64>().unwrap();
                 match data.len() {
-                    2 => gram_1.insert(word!(data[0]), num),
-                    3 => gram_2.insert((word!(data[0]), word!(data[1])), num),
-                    4 => gram_3.insert((word!(data[0]), word!(data[1]), word!(data[2])), num),
-                    /*5 => gram_4.insert(
+                    2 => gram_1.lock().unwrap().insert(word!(data[0]), num),
+                    3 => gram_2.lock().unwrap().insert((word!(data[0]), word!(data[1])), num),
+                    4 => gram_3
+                        .lock()
+                        .unwrap()
+                        .insert((word!(data[0]), word!(data[1]), word!(data[2])), num),
+                    /*5 => gram_4.lock().unwrap().insert(
                         (word!(data[0]), word!(data[1]), word!(data[2]), word!(data[3])),
                         num,
                     ),*/
@@ -113,8 +120,12 @@ pub fn load_gram(
                 };
             },
         );
-    }
+    });
     let lbd = 1.0 - lambda;
+    let mut gram_1 = gram_1.get_mut().unwrap().clone();
+    let mut gram_2 = gram_2.get_mut().unwrap().clone();
+    let mut gram_3 = gram_3.get_mut().unwrap().clone();
+    // let mut gram_4 = gram_4.get_mut().unwrap().clone();
     gram_1.shrink_to_fit();
     gram_2.shrink_to_fit();
     gram_3.shrink_to_fit();
@@ -137,6 +148,15 @@ pub fn load_gram(
     println!("...Loaded!");
     (gram_1, gram_2, gram_3)
     // (gram_1, gram_2, gram_3, gram_4)
+}
+
+pub fn load_config(config_path: &str) -> f64 {
+    println!("Loading config from {}", config_path);
+    let data =
+        fs::read_to_string(config_path).expect(&format!("...Unable to read {}", config_path));
+    let data = serde_json::from_str::<Value>(&data).expect("...Cannot convert to json");
+    let data = data.as_object().expect("...Invalid json");
+    data.get("lambda").expect("...No lambda field").as_f64().expect("...lambda is not a number")
 }
 
 pub fn word2hanzi(word: usize, hanzi_v: &Vec<char>, word_v: &Vec<Vec<usize>>) -> String {

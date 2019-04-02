@@ -287,7 +287,7 @@ pub fn gen_gram(
 
 pub fn gen_total_gram(path: &str) {
     println!("Generating total gram-n");
-    let config = &format!("{}/config.json", path);
+    let config = &format!("{}/gram.json", path);
     let data = fs::read_to_string(config).expect(&format!("...Unable to read {}", config));
     let data = serde_json::from_str::<Value>(&data).expect("...Cannot convert to json");
     let data = data.as_object().expect("...Invalid json");

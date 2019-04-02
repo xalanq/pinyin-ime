@@ -1,6 +1,8 @@
 use crate::load;
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::time;
 
 pub fn score(answer: &str, predict: &str) -> (usize, f64) {
@@ -55,12 +57,16 @@ pub struct PinyinIME {
     lambda: f64,
 }
 
-#[derive(Copy, Clone, PartialEq, PartialOrd)]
-struct HeapState {
+struct State {
     pub pos: usize,        // position of next word's beginning
     pub w1: usize,         // last and nearest word
     pub w2: Option<usize>, // ahead of w1
     // pub w3: Option<usize>, // ahead of w2
+    pub prev: usize, // previous index in pool
+}
+
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
+struct HeapState {
     pub p: f64,     // prob
     pub idx: usize, // idx for memory pool
 }
@@ -73,23 +79,26 @@ impl Ord for HeapState {
     }
 }
 
-struct SaveState {
-    pub w: usize,    // word
-    pub prev: usize, // previous index in pool
-}
-
+#[derive(Copy, Clone)]
 struct AnsState {
     pub p: f64,
     pub w: usize,
     pub prev: usize,
 }
 
+/*
+struct Node {
+    pub pos: usize,              // position of next word's beginning
+    pub w1: usize,               // last and nearest word
+    pub w2: Option<usize>,       // ahead of w1
+    pub max_p: Option<f64>,      // max prob
+    pub edge: Vec<(usize, f64)>, // Each element is an (index of node's pool, weight)
+}
+*/
+
 impl PinyinIME {
-    pub fn evals(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
+    fn preprocess(&self, pinyin: &str) -> (usize, Vec<Vec<(usize, &Vec<usize>)>>) {
         let items: Vec<_> = pinyin.split_whitespace().collect();
-        if items.len() == 0 {
-            return Vec::new();
-        }
         let mut pre = Vec::new();
         for i in 0..items.len() {
             let mut ava = Vec::new();
@@ -98,23 +107,81 @@ impl PinyinIME {
                 if j != i {
                     s.push('\'');
                 }
-                s.push_str(items[j]);
+                s.push_str(&items[j].to_lowercase());
                 if let Some(v) = self.pinyin_m.get(&s) {
                     ava.push((j + 1, v));
                 }
             }
             pre.push(ava);
         }
+        (items.len(), pre)
+    }
+
+    /*
+    pub fn dp(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
+        let (len, pre) = self.preprocess(pinyin);
+        let mut pool = vec![Node { pos: 0, w1: 0, w2: None, max_p: None, edge: vec![] }];
+        let mut vis = HashMap::new();
+        let mut idx = 0;
+        let lambda_ln = self.lambda.ln();
+        while idx < pool.len() {
+            let Node { pos, w1, w2, max_p: _, edge: _ } = pool[idx];
+            if pos == len {
+                idx += 1;
+                continue;
+            }
+            pre[pos].iter().for_each(|candi| {
+                candi.1.iter().for_each(|&w| {
+                    let y = (candi.0, w, Some(w1));
+                    let y = *vis.entry(y).or_insert_with(|| {
+                        pool.push(Node { pos: y.0, w1: y.1, w2: y.2, max_p: None, edge: vec![] });
+                        pool.len() - 1
+                    });
+                    let mut ls = None;
+                    let mut weight = match self.gram_2.get(&(w1, w)) {
+                        Some(&t) => t,
+                        None => {
+                            ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                            ls.unwrap()
+                        }
+                    };
+                    if w2 != None {
+                        weight = weight.max(match self.gram_3.get(&(w2.unwrap(), w1, w)) {
+                            Some(&t) => t,
+                            None => {
+                                if ls.is_none() {
+                                    ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                                }
+                                ls.unwrap()
+                            }
+                        });
+                    }
+                    pool[idx].edge.push((y, weight));
+                });
+            });
+            idx += 1;
+        }
+        println!("nodes: {}, edges: {}", idx, pool.iter().fold(0, |sum, x| sum + x.edge.len()));
+        // 跑了几个例子发现状态和边太tm多了，这跑一次k短路会爆炸，还是用慢慢拓展的dij吧
+        // nodes: 49804, edges: 2433368
+        vec![("hehe".to_owned(), 0.0)]
+    }
+    */
+
+    pub fn kth_shortest_small(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
+        let (len, pre) = self.preprocess(pinyin);
         let lambda_ln = self.lambda.ln();
         let mut heap = BinaryHeap::new();
         let mut pool = vec![];
-        let mut ans: VecDeque<AnsState> = VecDeque::new(); // left -> right, min -> max
-        pool.push(SaveState { w: 0, prev: 0 });
-        heap.push(HeapState { pos: 0, w1: 0, w2: None, p: 0.0, idx: 0 });
-        // heap.push(HeapState { pos: 0, w1: 0, w2: None, w3: None, p: 0.0, idx: 0 });
-        while let Some(HeapState { pos, w1, w2, p, idx }) = heap.pop() {
-            // while let Some(HeapState { pos, w1, w2, w3, p, idx }) = heap.pop() {
-            // println!("here pos: {}, w1: {}, w2: {:?}, p: {}, idx: {}", pos, w1, w2, p, idx);
+        let mut ans: Vec<AnsState> = Vec::new(); // left -> right, max -> min , rust has no min-max-heap
+        pool.push(State { pos: 0, w1: 0, w2: None, prev: 0 });
+        // pool.push(SaveState { pos: 0, w1: 0, w2: None, w3: None, prev: 0 });
+        heap.push(HeapState { p: 0.0, idx: 0 });
+        // let mut cnt = 0;
+        while let Some(HeapState { p, idx }) = heap.pop() {
+            // cnt += 1;
+            let State { pos, w1, w2, prev: _ } = pool[idx];
+            // let State { pos, w1, w2, w3, prev: _ } = pool[idx];
             pre[pos].iter().for_each(|candi| {
                 candi.1.iter().for_each(|&w| {
                     let mut ls = None;
@@ -136,38 +203,62 @@ impl PinyinIME {
                             }
                         });
                     }
-                    // cut
-                    if ans.len() == 0 || cp + p > ans.back().unwrap().p {
-                        let np = cp + p;
-                        if candi.0 == items.len() {
-                            if ans.len() == max_ans {
-                                ans.pop_front();
+                    /*
+                    if w3 != None {
+                        cp = cp.max(match self.gram_4.get(&(w3.unwrap(), w2.unwrap(), w1, w)) {
+                            Some(&t) => t,
+                            None => {
+                                if ls.is_none() {
+                                    ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                                }
+                                ls.unwrap()
                             }
-                            ans.push_back(AnsState { p: np, w, prev: idx });
+                        });
+                    }
+                    */
+                    // cut
+                    /*if w == 66540 {
+                        println!(
+                            "pos: {}, w2: {}, w1: {}, p: {}, cp: {}",
+                            pos,
+                            load::word2hanzi(w2.unwrap(), &self.hanzi_v, &self.word_v),
+                            load::word2hanzi(w1, &self.hanzi_v, &self.word_v),
+                            p,
+                            cp
+                        );
+                    }*/
+                    if ans.len() < max_ans || cp + p > ans.last().unwrap().p {
+                        let np = cp + p;
+                        if candi.0 == len {
+                            ans.push(AnsState { p: np, w, prev: idx });
+                            let mut i = ans.len() - 1;
+                            // idiot insert sort, i need a min-max heap
+                            while i > 0 && ans[i - 1].p < ans[i].p {
+                                ans.swap(i - 1, i);
+                                i -= 1;
+                            }
+                            if ans.len() > max_ans {
+                                ans.pop();
+                            }
                         } else {
-                            pool.push(SaveState { w, prev: idx });
-                            heap.push(HeapState {
-                                pos: candi.0,
-                                w1: w,
-                                w2: Some(w1),
-                                // w3: w2,
-                                p: np,
-                                idx: pool.len() - 1,
-                            });
+                            let y = State { pos: candi.0, w1: w, w2: Some(w1), prev: idx };
+                            pool.push(y);
+                            heap.push(HeapState { p: np, idx: pool.len() - 1 });
                         }
                     }
                 });
             });
         }
+        // println!("cnt: {}", cnt);
         let mut ans_s = Vec::new();
-        ans.iter().rev().for_each(|st| {
-            let mut s = String::new();
+        ans.iter().for_each(|st| {
             let mut ws = vec![st.w];
             let mut x = st.prev;
             while x != 0 {
-                ws.push(pool[x].w);
+                ws.push(pool[x].w1);
                 x = pool[x].prev;
             }
+            let mut s = String::new();
             ws.iter()
                 .rev()
                 .for_each(|w| s.push_str(&load::word2hanzi(*w, &self.hanzi_v, &self.word_v)));
@@ -176,29 +267,150 @@ impl PinyinIME {
         ans_s
     }
 
-    pub fn eval(&self, pinyin: &str) -> (String, f64) {
-        self.evals(pinyin, 1)[0].clone()
+    pub fn evals(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
+        if pinyin.len() == 0 || max_ans == 0 {
+            return Vec::new();
+        }
+        self.kth_shortest_small(pinyin, max_ans)
     }
-}
 
-impl Default for PinyinIME {
-    fn default() -> Self {
+    pub fn eval(&self, pinyin: &str) -> Option<(String, f64)> {
+        if pinyin.len() == 0 {
+            return None;
+        }
+        let (len, pre) = self.preprocess(pinyin);
+        let lambda_ln = self.lambda.ln();
+        let mut heap = BinaryHeap::new();
+        let mut vis = HashSet::new();
+        let mut pool = vec![];
+        let mut ans: Option<AnsState> = None;
+        pool.push(State { pos: 0, w1: 0, w2: None, prev: 0 });
+        // pool.push(SaveState { pos: 0, w1: 0, w2: None, w3: None, prev: 0 });
+        heap.push(HeapState { p: 0.0, idx: 0 });
+        // let mut cnt = 0;
+        while let Some(HeapState { p, idx }) = heap.pop() {
+            // cnt += 1;
+            let State { pos, w1, w2, prev: _ } = pool[idx];
+            // let State { pos, w1, w2, w3, prev: _ } = pool[idx];
+            pre[pos].iter().for_each(|candi| {
+                candi.1.iter().for_each(|&w| {
+                    let mut ls = None;
+                    let mut cp = match self.gram_2.get(&(w1, w)) {
+                        Some(&t) => t,
+                        None => {
+                            ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                            ls.unwrap()
+                        }
+                    };
+                    if w2 != None {
+                        cp = cp.max(match self.gram_3.get(&(w2.unwrap(), w1, w)) {
+                            Some(&t) => t,
+                            None => {
+                                if ls.is_none() {
+                                    ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                                }
+                                ls.unwrap()
+                            }
+                        });
+                    }
+                    /*
+                    if w3 != None {
+                        cp = cp.max(match self.gram_4.get(&(w3.unwrap(), w2.unwrap(), w1, w)) {
+                            Some(&t) => t,
+                            None => {
+                                if ls.is_none() {
+                                    ls = Some(lambda_ln + self.gram_1.get(&w).unwrap());
+                                }
+                                ls.unwrap()
+                            }
+                        });
+                    }
+                    */
+                    // cut
+                    if ans.is_none() || cp + p > ans.unwrap().p {
+                        let np = cp + p;
+                        if candi.0 == len {
+                            ans = Some(AnsState { p: np, w, prev: idx });
+                        } else {
+                            let y = (candi.0, w, Some(w1));
+                            if !vis.contains(&y) {
+                                vis.insert(y);
+                                let y = State { pos: y.0, w1: w, w2: y.2, prev: idx };
+                                pool.push(y);
+                                heap.push(HeapState { p: np, idx: pool.len() - 1 });
+                            }
+                        }
+                    }
+                });
+            });
+        }
+        // println!("cnt: {}", cnt);
+        if ans.is_none() {
+            return None;
+        }
+        let st = ans.unwrap();
+        let mut ws = vec![st.w];
+        let mut x = st.prev;
+        while x != 0 {
+            ws.push(pool[x].w1);
+            x = pool[x].prev;
+        }
+        let mut s = String::new();
+        ws.iter()
+            .rev()
+            .for_each(|w| s.push_str(&load::word2hanzi(*w, &self.hanzi_v, &self.word_v)));
+        Some((s, st.p.exp()))
+    }
+
+    pub fn eval_from(&self, input_path: &str, answer_path: &str, output_path: &str) {
+        let input_file = File::open(input_path).expect(&format!("Cannot open {}", input_path));
+        let answer_file = File::open(answer_path).expect(&format!("Cannot open {}", answer_path));
+        let output_file = File::open(output_path).expect(&format!("Cannot open {}", output_path));
+        let input_iter = BufReader::with_capacity(1024 * 1024 * 8, input_file).lines();
+        let mut answer_iter = BufReader::with_capacity(1024 * 1024 * 8, answer_file).lines();
+        let mut output = BufWriter::with_capacity(1024 * 1024 * 8, output_file);
+        let mut tot = 0;
+        let (mut sum_acc, mut sum_f1) = (0, 0.0);
+        input_iter.for_each(|input| {
+            let ans = answer_iter.next().unwrap().unwrap();
+            let pred = self.eval(&input.unwrap()).unwrap().0;
+            let (acc, f1) = score(&ans, &pred);
+            output.write(format!("{}\n", pred).as_bytes()).unwrap();
+            tot += 1;
+            sum_acc += acc;
+            sum_f1 += f1;
+        });
+        println!("Total: {}", tot);
+        println!("acc:   {:.2}", sum_acc as f64 / tot as f64);
+        println!("f1:    {:.2}", sum_f1 as f64 / tot as f64);
+    }
+
+    pub fn eval_from_only(&self, input_path: &str, output_path: &str) {
+        let input_file = File::open(input_path).expect(&format!("Cannot open {}", input_path));
+        let output_file = File::open(output_path).expect(&format!("Cannot open {}", output_path));
+        let input_iter = BufReader::with_capacity(1024 * 1024 * 8, input_file).lines();
+        let mut output = BufWriter::with_capacity(1024 * 1024 * 8, output_file);
+        input_iter.for_each(|input| {
+            let pred = self.eval(&input.unwrap()).unwrap().0;
+            output.write(format!("{}\n", pred).as_bytes()).unwrap();
+        });
+    }
+
+    pub fn new(config_path: &str) -> Self {
+        let lambda = load::load_config(config_path);
         let s_time = time::Instant::now();
 
-        println!("Initialize Pinyin IME (default)");
+        println!("Initializing Pinyin IME (lambda: {})", lambda);
         let max_len = 7;
-        let lambda = 0.5;
         let (hanzi_v, hanzi_m) = load::load_hanzi("./data/hanzi.txt");
         let (word_v, word_m, pinyin_m) = load::load_word("./data/word.txt", &hanzi_m);
         let (gram_1, gram_2, gram_3) = load::load_gram("./data", &hanzi_m, &word_m, lambda);
         // let (gram_1, gram_2, gram_3, gram_4) = load::load_gram("./data", &hanzi_m, &word_m);
 
         let mils = (time::Instant::now() - s_time).as_millis();
-        let days = mils / 1000 / 60 / 60 / 24;
-        let hours = mils / 1000 / 60 / 60 - days * 24;
-        let mins = mils / 1000 / 60 - days * 24 * 60 - hours * 60;
-        let secs = mils / 1000 - days * 24 * 60 * 60 - hours * 60 * 60 - mins * 60;
-        println!("Done! Total cost {}d {}h {}m {}s.", days, hours, mins, secs);
+        let mins = mils / 1000 / 60;
+        let secs = mils / 1000 - mins * 60;
+        println!("Done! Total cost {}m {}s.", mins, secs);
 
         Self { hanzi_v, word_v, pinyin_m, gram_1, gram_2, gram_3, max_len, lambda }
         // Self { hanzi_v, word_v, pinyin_m, gram_1, gram_2, gram_3, gram_4, max_len, lambda }
