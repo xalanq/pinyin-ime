@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 
 fn filter(s: &str, data: &mut String, hanzi_m: &HashMap<char, usize>) -> usize {
     let mut len = 0;
@@ -59,18 +59,16 @@ fn filter(s: &str, data: &mut String, hanzi_m: &HashMap<char, usize>) -> usize {
 fn gen_sen_one(path: &str, data: &mut String, hanzi_m: &HashMap<char, usize>) -> usize {
     println!("...Working on {}", path);
     let mut count = 0;
-    fs::read_to_string(path).expect(&format!("......Cannot read {}", path)).lines().for_each(
-        |line| {
-            if let Ok(mut raw) = serde_json::from_str::<Value>(&line) {
-                let html: String =
-                    serde_json::from_value(raw["html"].take()).expect("Invalid html");
-                let title: String =
-                    serde_json::from_value(raw["title"].take()).expect("Invalid title");
-                count += filter(&html, data, hanzi_m);
-                count += filter(&title, data, hanzi_m);
-            }
-        },
-    );
+    let file = File::open(path).expect(&format!("......Cannot open {}", path));
+    let iter = BufReader::with_capacity(1024 * 1024 * 32, file).lines();
+    iter.for_each(|line| {
+        if let Ok(mut raw) = serde_json::from_str::<Value>(&line.unwrap()) {
+            let html: String = serde_json::from_value(raw["html"].take()).expect("Invalid html");
+            let title: String = serde_json::from_value(raw["title"].take()).expect("Invalid title");
+            count += filter(&html, data, hanzi_m);
+            count += filter(&title, data, hanzi_m);
+        }
+    });
     count
 }
 

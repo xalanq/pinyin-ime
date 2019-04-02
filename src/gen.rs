@@ -3,9 +3,10 @@ use jieba_rs::Jieba;
 use pbr::ProgressBar;
 use pinyin;
 use serde_json::Value;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::time::Duration;
 
 fn gen_gram_filter(
@@ -72,21 +73,22 @@ fn gen_gram_one(
     jb: &Jieba,
 ) {
     println!("...Working on {}", path);
-    let data = fs::read_to_string(path).expect(&format!("......Cannot read {}", path));
-    let mut iter = data.lines();
-    let mut pb = ProgressBar::new(iter.next().unwrap().parse().unwrap());
+    let file = File::open(path).expect(&format!("......Cannot open {}", path));
+    let mut iter = BufReader::with_capacity(1024 * 1024 * 32, file).lines();
+    let mut pb = ProgressBar::new(iter.next().unwrap().unwrap().parse().unwrap());
     pb.set_max_refresh_rate(Some(Duration::from_secs(1)));
     let mut gc = 0;
+    let limit = 5;
     macro_rules! gc {
         () => {
-            gram_1.retain(|_, v| *v >= 3);
-            gram_2.retain(|_, v| *v >= 3);
-            gram_3.retain(|_, v| *v >= 3);
-            gram_4.retain(|_, v| *v >= 3);
+            gram_1.retain(|_, v| *v >= limit);
+            gram_2.retain(|_, v| *v >= limit);
+            gram_3.retain(|_, v| *v >= limit);
+            gram_4.retain(|_, v| *v >= limit);
         };
     }
     for line in iter {
-        gen_gram_filter(line, gram_1, gram_2, gram_3, gram_4, hanzi_m, word_m, jb);
+        gen_gram_filter(&line.unwrap(), gram_1, gram_2, gram_3, gram_4, hanzi_m, word_m, jb);
         pb.add(1);
         gc += 1;
         if gc % 30000 == 0 {
@@ -113,6 +115,7 @@ pub fn gen_gram(
     hanzi_m: &HashMap<char, usize>,
     word_v: &Vec<Vec<usize>>,
     word_m: &HashMap<Vec<usize>, usize>,
+    pinyin_m: &HashMap<String, Vec<usize>>,
     jb: &Jieba,
 ) {
     println!("Generating gram-n");
@@ -136,75 +139,120 @@ pub fn gen_gram(
             );
         }
     }
+
     println!("...summaring");
-    let mut gram_1: Vec<_> = gram_1.into_iter().collect();
-    let mut gram_2: Vec<_> = gram_2.into_iter().collect();
-    let mut gram_3: Vec<_> = gram_3.into_iter().collect();
-    let mut gram_4: Vec<_> = gram_4.into_iter().collect();
-    let k1 = gram_1.len().min(k_th.0);
-    let k2 = gram_2.len().min(k_th.1);
-    let k3 = gram_3.len().min(k_th.2);
-    let k4 = gram_4.len().min(k_th.3);
-    kth(&mut gram_1, k1);
-    kth(&mut gram_2, k2);
-    kth(&mut gram_3, k3);
-    kth(&mut gram_4, k4);
-    gram_1.truncate(k1);
-    gram_2.truncate(k2);
-    gram_3.truncate(k3);
-    gram_4.truncate(k4);
-    gram_1.sort_unstable_by(|&(a, b), &(c, d)| {
-        if word_v[a].len() == word_v[c].len() {
-            d.cmp(&b)
-        } else {
-            word_v[a].len().cmp(&word_v[c].len())
-        }
+    let mut word2pinyin = HashMap::new();
+    pinyin_m.iter().for_each(|(k, v)| {
+        v.iter().for_each(|w| word2pinyin.entry(*w).or_insert(Vec::new()).push(k))
     });
-    gram_2.sort_unstable_by(|&(a, b), &(c, d)| {
-        if word_v[a.0].len() == word_v[c.0].len() {
-            if word_v[a.1].len() == word_v[c.1].len() {
-                d.cmp(&b)
-            } else {
-                word_v[a.1].len().cmp(&word_v[c.1].len())
-            }
-        } else {
-            word_v[a.0].len().cmp(&word_v[c.0].len())
-        }
+    macro_rules! short {
+        ($g:ident, $kk:expr) => {
+            let mut $g: Vec<_> = $g.into_iter().collect();
+            let k = $g.len().min($kk);
+            kth(&mut $g, k);
+            $g.truncate(k);
+        };
+    }
+    short!(gram_2, k_th.1);
+    short!(gram_3, k_th.2);
+    short!(gram_4, k_th.3);
+    (2..word_v.len()).for_each(|w| {
+        gram_1.entry(w).or_insert(1);
     });
-    gram_3.sort_unstable_by(|&(a, b), &(c, d)| {
-        if word_v[a.0].len() == word_v[c.0].len() {
-            if word_v[a.1].len() == word_v[c.1].len() {
-                if word_v[a.2].len() == word_v[c.2].len() {
-                    d.cmp(&b)
-                } else {
-                    word_v[a.2].len().cmp(&word_v[c.2].len())
+    let gram_1: Vec<_> = gram_1.into_iter().collect();
+
+    macro_rules! cmp {
+        ($a:expr, $c:expr) => {{
+            for i in 0..$a.len() {
+                if $a[i].len() != $c[i].len() {
+                    return $a[i].len().cmp(&$c[i].len());
+                } else if $a[i] != $c[i] {
+                    return $a[i].cmp(&$c[i]);
                 }
-            } else {
-                word_v[a.1].len().cmp(&word_v[c.1].len())
             }
-        } else {
-            word_v[a.0].len().cmp(&word_v[c.0].len())
-        }
+            Ordering::Equal
+        }};
+    }
+    macro_rules! word {
+        ($w:expr) => {
+            word2hanzi($w, hanzi_v, word_v)
+        };
+    }
+
+    // 一个词若有多种读音，很难去算每种读音的概率是多少
+    // 故只能暂时这样近似：
+    // 每个词的每个读音都累加出现次数
+    // 然后每个词计算所有读音自己出现的最大频率，作为所有读音的概率
+    let mut cnt = HashMap::new();
+    gram_1.iter().for_each(|(k, v)| {
+        word2pinyin.get(k).unwrap().iter().for_each(|py| {
+            *cnt.entry(*py).or_insert(0) += *v;
+        });
     });
-    gram_4.sort_unstable_by(|&(a, b), &(c, d)| {
-        if word_v[a.0].len() == word_v[c.0].len() {
-            if word_v[a.1].len() == word_v[c.1].len() {
-                if word_v[a.2].len() == word_v[c.2].len() {
-                    if word_v[a.3].len() == word_v[c.3].len() {
-                        d.cmp(&b)
-                    } else {
-                        word_v[a.3].len().cmp(&word_v[c.3].len())
-                    }
-                } else {
-                    word_v[a.2].len().cmp(&word_v[c.2].len())
-                }
-            } else {
-                word_v[a.1].len().cmp(&word_v[c.1].len())
-            }
-        } else {
-            word_v[a.0].len().cmp(&word_v[c.0].len())
-        }
+    let mut gram_1: Vec<_> = gram_1
+        .iter()
+        .map(|(k, v)| {
+            let pys = word2pinyin.get(k).unwrap();
+            let mn = pys.iter().map(|py| *cnt.get(*py).unwrap()).min().unwrap();
+            (vec![word!(*k)], *v as f64 / mn as f64)
+        })
+        .collect();
+    gram_1.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c));
+
+    // 和gram_1差不多，多音的单词只能找最大的
+    // 比如说
+    // 我们 再 0.2777777777777778
+    // 我们 在 0.7222222222222222
+    let mut cnt = HashMap::new();
+    gram_2.iter().for_each(|(k, v)| {
+        word2pinyin.get(&k.1).unwrap().iter().for_each(|py| {
+            *cnt.entry((k.0, *py)).or_insert(0) += *v;
+        });
     });
+    let mut gram_2: Vec<_> = gram_2
+        .iter()
+        .map(|(k, v)| {
+            let pys = word2pinyin.get(&k.1).unwrap();
+            let mn = pys.iter().map(|py| *cnt.get(&(k.0, *py)).unwrap()).min().unwrap();
+            (vec![word!(k.0), word!(k.1)], *v as f64 / mn as f64)
+        })
+        .collect();
+    gram_2.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c));
+
+    // 同理
+    let mut cnt = HashMap::new();
+    gram_3.iter().for_each(|(k, v)| {
+        word2pinyin.get(&k.2).unwrap().iter().for_each(|py| {
+            *cnt.entry((k.0, k.1, *py)).or_insert(0) += *v;
+        });
+    });
+    let mut gram_3: Vec<_> = gram_3
+        .iter()
+        .map(|(k, v)| {
+            let pys = word2pinyin.get(&k.2).unwrap();
+            let mn = pys.iter().map(|py| *cnt.get(&(k.0, k.1, *py)).unwrap()).min().unwrap();
+            (vec![word!(k.0), word!(k.1), word!(k.2)], *v as f64 / mn as f64)
+        })
+        .collect();
+    gram_3.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c));
+
+    // 同理
+    let mut cnt = HashMap::new();
+    gram_4.iter().for_each(|(k, v)| {
+        word2pinyin.get(&k.3).unwrap().iter().for_each(|py| {
+            *cnt.entry((k.0, k.1, k.2, *py)).or_insert(0) += *v;
+        });
+    });
+    let mut gram_4: Vec<_> = gram_4
+        .iter()
+        .map(|(k, v)| {
+            let pys = word2pinyin.get(&k.3).unwrap();
+            let mn = pys.iter().map(|py| *cnt.get(&(k.0, k.1, k.2, *py)).unwrap()).min().unwrap();
+            (vec![word!(k.0), word!(k.1), word!(k.2), word!(k.3)], *v as f64 / mn as f64)
+        })
+        .collect();
+    gram_4.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c));
+
     println!(
         "......len of gram 1: {}\n......len of gram 2: {}\n......len of gram 3: {}\n\
          ......len of gram 4: {}",
@@ -213,74 +261,27 @@ pub fn gen_gram(
         gram_3.len(),
         gram_4.len(),
     );
-    println!("...writing");
     let errmsg = &format!("......Cannot save to {}", save_path);
-    File::create(&format!("{}{}", save_path, "/gram_1.txt"))
-        .expect(errmsg)
-        .write_all(
-            gram_1
-                .iter()
-                .fold(&mut String::new(), |s, &(a, b)| {
-                    s.push_str(&format!("{} {}\n", word2hanzi(a, hanzi_v, word_v), b));
-                    s
-                })
-                .as_bytes(),
-        )
-        .expect(errmsg);
-    File::create(&format!("{}{}", save_path, "/gram_2.txt"))
-        .expect(errmsg)
-        .write_all(
-            gram_2
-                .iter()
-                .fold(&mut String::new(), |s, &(a, b)| {
-                    s.push_str(&format!(
-                        "{} {} {}\n",
-                        word2hanzi(a.0, hanzi_v, word_v),
-                        word2hanzi(a.1, hanzi_v, word_v),
-                        b
-                    ));
-                    s
-                })
-                .as_bytes(),
-        )
-        .expect(errmsg);
-    File::create(&format!("{}{}", save_path, "/gram_3.txt"))
-        .expect(errmsg)
-        .write_all(
-            gram_3
-                .iter()
-                .fold(&mut String::new(), |s, &(a, b)| {
-                    s.push_str(&format!(
-                        "{} {} {} {}\n",
-                        word2hanzi(a.0, hanzi_v, word_v),
-                        word2hanzi(a.1, hanzi_v, word_v),
-                        word2hanzi(a.2, hanzi_v, word_v),
-                        b
-                    ));
-                    s
-                })
-                .as_bytes(),
-        )
-        .expect(errmsg);
-    File::create(&format!("{}{}", save_path, "/gram_4.txt"))
-        .expect(errmsg)
-        .write_all(
-            gram_4
-                .iter()
-                .fold(&mut String::new(), |s, &(a, b)| {
-                    s.push_str(&format!(
-                        "{} {} {} {} {}\n",
-                        word2hanzi(a.0, hanzi_v, word_v),
-                        word2hanzi(a.1, hanzi_v, word_v),
-                        word2hanzi(a.2, hanzi_v, word_v),
-                        word2hanzi(a.3, hanzi_v, word_v),
-                        b
-                    ));
-                    s
-                })
-                .as_bytes(),
-        )
-        .expect(errmsg);
+    macro_rules! save {
+        ($g:ident, $i:expr) => {
+            println!("...writing gram_{}.txt", $i);
+            File::create(&format!("{}/gram_{}.txt", save_path, $i))
+                .expect(errmsg)
+                .write_all(
+                    $g.iter()
+                        .fold(&mut String::new(), |s, (a, b)| {
+                            s.push_str(&format!("{} {}\n", a.join(" "), b));
+                            s
+                        })
+                        .as_bytes(),
+                )
+                .expect(errmsg);
+        };
+    }
+    save!(gram_1, 1);
+    save!(gram_2, 2);
+    save!(gram_3, 3);
+    save!(gram_4, 4);
     println!("...Done!");
 }
 
@@ -297,44 +298,35 @@ pub fn gen_total_gram(path: &str) {
     }
     data.iter().for_each(|(k, v)| {
         let w = v.as_f64().expect("...Invalid number");
-        let mut gram = Vec::new();
-        for _ in 0..4 {
-            gram.push(Vec::new());
-        }
         for i in 0..4 {
             let fname = &format!("{}/{}/gram_{}.txt", path, k, i + 1);
             println!("...Working on {}", fname);
-            let mut tot = 0;
             fs::read_to_string(fname)
                 .expect(&format!("......Cannot read {}", fname))
                 .lines()
                 .for_each(|line| {
-                    let p = line.rfind(" ").unwrap();
-                    let num = line[p + 1..].parse::<usize>().unwrap();
-                    tot += num;
-                    gram[i].push((line[0..p].to_string(), num));
+                    let pos = line.rfind(" ").unwrap();
+                    let p = line[pos + 1..].parse::<f64>().unwrap();
+                    let ws: Vec<_> =
+                        line[0..pos].split_whitespace().map(|s| s.to_string()).collect();
+                    *total_gram[i].entry(ws).or_insert(0.0) += p * w;
                 });
-            gram[i].iter().for_each(|(a, b)| {
-                *total_gram[i].entry(a.clone()).or_insert(0.0) += *b as f64 * w / tot as f64;
-            });
         }
         sum += w;
     });
-    let mut gram: Vec<Vec<(String, f64)>> = Vec::new();
+    let mut gram: Vec<Vec<(&Vec<String>, f64)>> = Vec::new();
     for i in 0..4 {
-        total_gram[i].iter_mut().for_each(|(_, b)| *b = *b * 10000.0 / sum);
-        let mut tmp = Vec::new();
-        total_gram[i].iter().for_each(|(k, v)| tmp.push((k.clone(), *v)));
-        tmp.sort_unstable_by(
-            |(a, b), (c, d)| {
-                if a == c {
-                    d.partial_cmp(b).unwrap()
-                } else {
-                    a.cmp(c)
+        gram.push(total_gram[i].iter().map(|(k, v)| (k, *v / sum)).collect());
+        gram[i].sort_unstable_by(|(a, _), (c, _)| {
+            for i in 0..a.len() {
+                if a[i].len() != c[i].len() {
+                    return a[i].len().cmp(&c[i].len());
+                } else if a[i] != c[i] {
+                    return a[i].cmp(&c[i]);
                 }
-            },
-        );
-        gram.push(tmp);
+            }
+            Ordering::Equal
+        });
     }
     for i in 0..4 {
         let fname = &format!("{}/gram_{}.txt", path, i + 1);
@@ -345,7 +337,7 @@ pub fn gen_total_gram(path: &str) {
                 gram[i]
                     .iter()
                     .fold(&mut String::new(), |s, (a, b)| {
-                        s.push_str(&format!("{} {}\n", a, b));
+                        s.push_str(&format!("{} {}\n", a.join(" "), b));
                         s
                     })
                     .as_bytes(),
@@ -355,7 +347,12 @@ pub fn gen_total_gram(path: &str) {
     println!("...Done!");
 }
 
-fn word_filter(s: &str, data: &mut HashSet<String>, hanzi_m: &HashMap<char, usize>) {
+fn word_filter(
+    s: &str,
+    data: &mut HashSet<String>,
+    hanzi_m: &HashMap<char, usize>,
+    max_len: usize,
+) {
     s.split_whitespace().for_each(|a| {
         let mut valid = true;
         let mut len = 0;
@@ -366,23 +363,35 @@ fn word_filter(s: &str, data: &mut HashSet<String>, hanzi_m: &HashMap<char, usiz
             }
             len += 1;
         }
-        if valid && len > 1 && len <= 7 {
+        if valid && len > 1 && len <= max_len {
             data.insert(a.to_string());
         }
     });
 }
 
-fn gen_word_one(path: &str, data: &mut HashSet<String>, hanzi_m: &HashMap<char, usize>) {
+fn gen_word_one(
+    path: &str,
+    data: &mut HashSet<String>,
+    hanzi_m: &HashMap<char, usize>,
+    max_len: usize,
+) {
     println!("...Working on {}", path);
     word_filter(
         &fs::read_to_string(path).expect(&format!("......Cannot read {}", path)),
         data,
         hanzi_m,
+        max_len,
     );
     println!("......total len: {}", data.len());
 }
 
-pub fn gen_word(path: &str, ref_path: &str, save_path: &str, hanzi_m: &HashMap<char, usize>) {
+pub fn gen_word(
+    path: &str,
+    ref_path: &str,
+    save_path: &str,
+    hanzi_m: &HashMap<char, usize>,
+    max_len: usize,
+) {
     println!("Generating word");
     let paths = fs::read_dir(path).unwrap();
     let mut data = HashSet::new();
@@ -392,7 +401,7 @@ pub fn gen_word(path: &str, ref_path: &str, save_path: &str, hanzi_m: &HashMap<c
     for path in paths {
         let path = path.unwrap();
         if path.metadata().unwrap().is_file() {
-            gen_word_one(&path.path().display().to_string(), &mut data, hanzi_m);
+            gen_word_one(&path.path().display().to_string(), &mut data, hanzi_m, max_len);
         }
     }
     let mut data: Vec<_> = data.into_iter().collect();

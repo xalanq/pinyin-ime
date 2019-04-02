@@ -76,18 +76,20 @@ pub fn load_gram(
     path: &str,
     hanzi_m: &HashMap<char, usize>,
     word_m: &HashMap<Vec<usize>, usize>,
+    lambda: f64, // P(a|b) = (1-lambda) * P(a|b) + lambda * P(a)
 ) -> (
     HashMap<usize, f64>,
     HashMap<(usize, usize), f64>,
     HashMap<(usize, usize, usize), f64>,
-    HashMap<(usize, usize, usize, usize), f64>,
+    // HashMap<(usize, usize, usize, usize), f64>,
 ) {
     println!("Loading gram");
     let mut gram_1 = HashMap::new();
     let mut gram_2 = HashMap::new();
     let mut gram_3 = HashMap::new();
-    let mut gram_4 = HashMap::new();
-    for i in 0..4 {
+    // let mut gram_4 = HashMap::new();
+    for i in 0..3 {
+        // for i in 0..4 {
         let fname = &format!("{}/gram_{}.txt", path, i + 1);
         println!("...Working on {}", fname);
         macro_rules! word {
@@ -98,26 +100,43 @@ pub fn load_gram(
         fs::read_to_string(fname).expect(&format!("......Cannot read {}", fname)).lines().for_each(
             |line| {
                 let data: Vec<_> = line.split_whitespace().collect();
-                let num = data[data.len() - 1].parse::<f64>().unwrap() / 10000.0;
+                let num = data[data.len() - 1].parse::<f64>().unwrap();
                 match data.len() {
                     2 => gram_1.insert(word!(data[0]), num),
                     3 => gram_2.insert((word!(data[0]), word!(data[1])), num),
                     4 => gram_3.insert((word!(data[0]), word!(data[1]), word!(data[2])), num),
-                    5 => gram_4.insert(
+                    /*5 => gram_4.insert(
                         (word!(data[0]), word!(data[1]), word!(data[2]), word!(data[3])),
                         num,
-                    ),
+                    ),*/
                     _ => None,
                 };
             },
         );
     }
+    let lbd = 1.0 - lambda;
     gram_1.shrink_to_fit();
     gram_2.shrink_to_fit();
     gram_3.shrink_to_fit();
-    gram_4.shrink_to_fit();
+    // gram_4.shrink_to_fit();
+    gram_2.iter_mut().for_each(|(&(_, w), a)| {
+        let v = lbd * *a + lambda * gram_1.get(&w).unwrap();
+        *a = v.ln();
+    });
+    gram_3.iter_mut().for_each(|(&(_, _, w), a)| {
+        let v = lbd * *a + lambda * gram_1.get(&w).unwrap();
+        *a = v.ln();
+    });
+    gram_1.iter_mut().for_each(|(_, a)| *a = a.ln());
+    /*
+    gram_4.iter_mut().for_each(|(&(_, _, _, w), a)| {
+        let v = lbd * *a + lambda * gram_1.get(&w).unwrap();
+        *a = v.ln();
+    });
+    */
     println!("...Loaded!");
-    (gram_1, gram_2, gram_3, gram_4)
+    (gram_1, gram_2, gram_3)
+    // (gram_1, gram_2, gram_3, gram_4)
 }
 
 pub fn word2hanzi(word: usize, hanzi_v: &Vec<char>, word_v: &Vec<Vec<usize>>) -> String {
