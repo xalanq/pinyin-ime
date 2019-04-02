@@ -1,8 +1,10 @@
 use crate::load;
+use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::fs::{self, File};
+use std::io::Write;
+use std::sync::Mutex;
 use std::time;
 
 pub fn score(answer: &str, predict: &str) -> (usize, f64) {
@@ -363,37 +365,66 @@ impl PinyinIME {
     }
 
     pub fn eval_from(&self, input_path: &str, answer_path: &str, output_path: &str) {
-        let input_file = File::open(input_path).expect(&format!("Cannot open {}", input_path));
-        let answer_file = File::open(answer_path).expect(&format!("Cannot open {}", answer_path));
-        let output_file = File::open(output_path).expect(&format!("Cannot open {}", output_path));
-        let input_iter = BufReader::with_capacity(1024 * 1024 * 8, input_file).lines();
-        let mut answer_iter = BufReader::with_capacity(1024 * 1024 * 8, answer_file).lines();
-        let mut output = BufWriter::with_capacity(1024 * 1024 * 8, output_file);
-        let mut tot = 0;
-        let (mut sum_acc, mut sum_f1) = (0, 0.0);
-        input_iter.for_each(|input| {
-            let ans = answer_iter.next().unwrap().unwrap();
-            let pred = self.eval(&input.unwrap()).unwrap().0;
-            let (acc, f1) = score(&ans, &pred);
-            output.write(format!("{}\n", pred).as_bytes()).unwrap();
-            tot += 1;
-            sum_acc += acc;
-            sum_f1 += f1;
+        println!("Predicting...");
+        let s_time = time::Instant::now();
+        let mut output = File::create(output_path).expect(&format!("Cannot open {}", output_path));
+        let input = fs::read_to_string(input_path).expect(&format!("Cannot read {}", input_path));
+        let ans = fs::read_to_string(answer_path).expect(&format!("Cannot read {}", answer_path));
+        let input: Vec<_> = input.lines().collect();
+        let ans: Vec<_> = ans.lines().collect();
+        let preds = Mutex::new(vec![String::new(); input.len()]);
+        let tot = Mutex::new(0);
+        let (sum_acc, sum_f1) = (Mutex::new(0), Mutex::new(0.0));
+        input.par_iter().zip(ans).enumerate().for_each(|(i, (input, ans))| {
+            let pred = self.eval(input);
+            let pred = if pred.is_none() { String::new() } else { pred.unwrap().0 };
+            let (acc, f1) = score(ans, &pred);
+            preds.lock().unwrap()[i] = pred;
+            *sum_acc.lock().unwrap() += acc;
+            *sum_f1.lock().unwrap() += f1;
+            let mut r = tot.lock().unwrap();
+            *r += 1;
+            if *r % 500 == 0 {
+                println!("...Finished {}", *r);
+            }
         });
-        println!("Total: {}", tot);
-        println!("acc:   {:.2}", sum_acc as f64 / tot as f64);
-        println!("f1:    {:.2}", sum_f1 as f64 / tot as f64);
+        output.write_all(preds.lock().unwrap().join("\n").as_bytes()).unwrap();
+        let tot = *tot.lock().unwrap();
+        println!("Total lines: {}", tot);
+        println!("acc:   {:.2}", *sum_acc.lock().unwrap() as f64 / tot as f64);
+        println!("f1:    {:.2}", *sum_f1.lock().unwrap() as f64 / tot as f64);
+        let mils = (time::Instant::now() - s_time).as_millis();
+        let mins = mils / 1000 / 60;
+        let secs = mils / 1000 - mins * 60;
+        println!("Total cost {}m {}s.", mins, secs);
+        println!("Exit...");
     }
 
     pub fn eval_from_only(&self, input_path: &str, output_path: &str) {
-        let input_file = File::open(input_path).expect(&format!("Cannot open {}", input_path));
-        let output_file = File::open(output_path).expect(&format!("Cannot open {}", output_path));
-        let input_iter = BufReader::with_capacity(1024 * 1024 * 8, input_file).lines();
-        let mut output = BufWriter::with_capacity(1024 * 1024 * 8, output_file);
-        input_iter.for_each(|input| {
-            let pred = self.eval(&input.unwrap()).unwrap().0;
-            output.write(format!("{}\n", pred).as_bytes()).unwrap();
+        println!("Predicting...");
+        let s_time = time::Instant::now();
+        let mut output = File::create(output_path).expect(&format!("Cannot open {}", output_path));
+        let input = fs::read_to_string(input_path).expect(&format!("Cannot read {}", input_path));
+        let input: Vec<_> = input.lines().collect();
+        let preds = Mutex::new(vec![String::new(); input.len()]);
+        let tot = Mutex::new(0);
+        input.par_iter().enumerate().for_each(|(i, input)| {
+            let pred = self.eval(input);
+            let pred = if pred.is_none() { String::new() } else { pred.unwrap().0 };
+            preds.lock().unwrap()[i] = pred;
+            let mut r = tot.lock().unwrap();
+            *r += 1;
+            if *r % 500 == 0 {
+                println!("...Finished {}", *r);
+            }
         });
+        output.write_all(preds.lock().unwrap().join("\n").as_bytes()).unwrap();
+        println!("Total lines: {}", tot.lock().unwrap());
+        let mils = (time::Instant::now() - s_time).as_millis();
+        let mins = mils / 1000 / 60;
+        let secs = mils / 1000 - mins * 60;
+        println!("Total cost {}m {}s.", mins, secs);
+        println!("Exit...");
     }
 
     pub fn new(config_path: &str) -> Self {

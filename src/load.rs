@@ -87,12 +87,11 @@ pub fn load_gram(
     // HashMap<(usize, usize, usize, usize), f64>,
 ) {
     println!("Loading gram");
-    let mut gram_1 = Mutex::new(HashMap::new());
-    let mut gram_2 = Mutex::new(HashMap::new());
-    let mut gram_3 = Mutex::new(HashMap::new());
+    let gram_1 = Mutex::new(HashMap::new());
+    let gram_2 = Mutex::new(HashMap::new());
+    let gram_3 = Mutex::new(HashMap::new());
     // let mut gram_4 = Mutex::new(HashMap::new());
-    let ids = [0, 1, 2];
-    ids.par_iter().for_each(|i| {
+    (0..3).into_par_iter().for_each(|i| {
         // for i in 0..4 {
         let fname = &format!("{}/gram_{}.txt", path, i + 1);
         println!("...Working on {}", fname);
@@ -122,9 +121,9 @@ pub fn load_gram(
         );
     });
     let lbd = 1.0 - lambda;
-    let mut gram_1 = gram_1.get_mut().unwrap().clone();
-    let mut gram_2 = gram_2.get_mut().unwrap().clone();
-    let mut gram_3 = gram_3.get_mut().unwrap().clone();
+    let mut gram_1 = gram_1.lock().unwrap().clone();
+    let mut gram_2 = gram_2.lock().unwrap().clone();
+    let mut gram_3 = gram_3.lock().unwrap().clone();
     // let mut gram_4 = gram_4.get_mut().unwrap().clone();
     gram_1.shrink_to_fit();
     gram_2.shrink_to_fit();
