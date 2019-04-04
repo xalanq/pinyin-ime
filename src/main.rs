@@ -1,23 +1,36 @@
 extern crate pinyin_ime;
-use pinyin_ime::eval::PinyinIME;
 /*
 use pinyin_ime::collections as col;
 use pinyin_ime::gen;
 use pinyin_ime::load::*;
 */
+// use pinyin_ime::eval;
+use pinyin_ime::eval::PinyinIME;
 use std::env;
 
 fn main() {
     /*
     let (hanzi_v, hanzi_m) = load_hanzi("./data/hanzi.txt");
+    // gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 7);
     // gen::gen_sen("./tmp/raw/sina", "./tmp/text/sina/sina.txt", &hanzi_m, col::gen_sina);
     // gen::gen_sen("./tmp/raw/student", "./tmp/text/student/student.txt", &hanzi_m, col::gen_raw);
-    // gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 7);
 
-    let (word_v, word_m, pinyin_m) = load_word("./data/word.txt", &hanzi_m);
+    let (word_v, word_m, _) = load_word("./data/word.txt", &hanzi_m);
     // gen::gen_jieba_dict("./data/jieba.txt", &hanzi_v, &word_v);
     let jb = load_jieba("./data/jieba.txt");
 
+    /*
+    gen::gen_gram(
+        "./tmp/text/sina",
+        "./data/sina",
+        (1000000, 1000000, 1000000, 1000000),
+        &hanzi_v,
+        &hanzi_m,
+        &word_v,
+        &word_m,
+        &jb,
+        5,
+    );
     gen::gen_gram(
         "./tmp/text/student",
         "./data/student",
@@ -26,12 +39,12 @@ fn main() {
         &hanzi_m,
         &word_v,
         &word_m,
-        &pinyin_m,
         &jb,
         1,
     );
     */
-    // gen::gen_total_gram("./data");
+    gen::gen_total_gram("./data");
+     */
     /*
     let seq = [
         "qing hua da xue ji suan ji xi",
@@ -73,7 +86,7 @@ fn main() {
     let ans: Vec<_> = ans.iter().map(|x| x.to_string()).collect();
     let mut best_pred = Vec::new();
 
-    let ime = PinyinIME::new();
+    let ime = PinyinIME::new("./data/config.json");
     for i in 0..ans.len() {
         let preds = ime.evals(&seq[i], 5);
         best_pred.push(preds[0].0.clone());
