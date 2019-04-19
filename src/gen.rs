@@ -1,5 +1,6 @@
 use crate::load::{hanzi2word, word2hanzi};
 use crate::max_lines::*;
+use crate::HB;
 use jieba_rs::Jieba;
 use pbr::ProgressBar;
 use pinyin;
@@ -7,7 +8,6 @@ use rand::{seq::SliceRandom, thread_rng};
 use rayon::current_num_threads;
 use rayon::prelude::*;
 use serde_json::Value;
-use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
@@ -16,14 +16,14 @@ use std::time::{self, Duration};
 
 fn gen_gram_one(
     path: &str,
-    gram_1: &mut HashMap<usize, usize>,
-    gram_2: &mut HashMap<(usize, usize), usize>,
-    gram_3: &mut HashMap<(usize, usize, usize), usize>,
-    gram_4: &mut HashMap<(usize, usize, usize, usize), usize>,
-    hanzi_m: &HashMap<char, usize>,
-    word_m: &HashMap<Vec<usize>, usize>,
+    gram_1: &mut HashMap<usize, usize, HB>,
+    gram_2: &mut HashMap<(usize, usize), usize, HB>,
+    gram_3: &mut HashMap<(usize, usize, usize), usize, HB>,
+    gram_4: &mut HashMap<(usize, usize, usize, usize), usize, HB>,
+    hanzi_m: &HashMap<char, usize, HB>,
+    word_m: &HashMap<Vec<usize>, usize, HB>,
     jb: &Jieba,
-    limit: usize,
+    limit: (usize, usize, usize),
 ) {
     println!("...Working on {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
@@ -35,16 +35,16 @@ fn gen_gram_one(
     let mut pb = ProgressBar::new(((tot_lines + max_lines - 1) / max_lines) as u64);
     pb.set_max_refresh_rate(Some(Duration::from_secs(1)));
 
-    let t1 = Mutex::new(HashMap::new());
-    let t2 = Mutex::new(HashMap::new());
-    let t3 = Mutex::new(HashMap::new());
-    let t4 = Mutex::new(HashMap::new());
+    let t1 = Mutex::new(HashMap::with_hasher(HB::default()));
+    let t2 = Mutex::new(HashMap::with_hasher(HB::default()));
+    let t3 = Mutex::new(HashMap::with_hasher(HB::default()));
+    let t4 = Mutex::new(HashMap::with_hasher(HB::default()));
     it.for_each(|slice| {
         slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
-            let mut g1 = HashMap::new();
-            let mut g2 = HashMap::new();
-            let mut g3 = HashMap::new();
-            let mut g4 = HashMap::new();
+            let mut g1 = HashMap::with_hasher(HB::default());
+            let mut g2 = HashMap::with_hasher(HB::default());
+            let mut g3 = HashMap::with_hasher(HB::default());
+            let mut g4 = HashMap::with_hasher(HB::default());
             let mut line = String::new();
             lines.iter().for_each(|l| {
                 if let Ok(l) = l {
@@ -57,10 +57,12 @@ fn gen_gram_one(
                     ws.iter().map(|w| hanzi2word(*w, hanzi_m, word_m).unwrap()).collect();
                 // start
                 if sen.len() > 0 && sen[0] != 1 {
-                    *g1.entry(0).or_insert(0) += 1;
                     *g2.entry((0, sen[0])).or_insert(0) += 1;
+                    *g3.entry((0, 0, sen[0])).or_insert(0) += 1;
+                    *g4.entry((0, 0, 0, sen[0])).or_insert(0) += 1;
                     if sen.len() > 1 && sen[1] != 1 {
                         *g3.entry((0, sen[0], sen[1])).or_insert(0) += 1;
+                        *g4.entry((0, 0, sen[0], sen[1])).or_insert(0) += 1;
                         if sen.len() > 2 && sen[2] != 1 {
                             *g4.entry((0, sen[0], sen[1], sen[2])).or_insert(0) += 1;
                         }
@@ -105,10 +107,9 @@ fn gen_gram_one(
             g4.iter().for_each(|(k, v)| *tt4.entry(*k).or_insert(0) += v);
         });
         join!(
-            || t1.lock().unwrap().retain(|_, v| *v >= limit),
-            || t2.lock().unwrap().retain(|_, v| *v >= limit),
-            || t3.lock().unwrap().retain(|_, v| *v >= limit),
-            || t4.lock().unwrap().retain(|_, v| *v >= limit)
+            || t2.lock().unwrap().retain(|_, v| *v >= limit.0),
+            || t3.lock().unwrap().retain(|_, v| *v >= limit.1),
+            || t4.lock().unwrap().retain(|_, v| *v >= limit.2)
         );
         pb.add(1);
     });
@@ -118,12 +119,9 @@ fn gen_gram_one(
         || t3.into_inner().unwrap().iter().for_each(|(k, v)| *gram_3.entry(*k).or_insert(0) += v),
         || t4.into_inner().unwrap().iter().for_each(|(k, v)| *gram_4.entry(*k).or_insert(0) += v)
     );
-    join!(
-        || gram_1.retain(|_, v| *v >= limit),
-        || gram_2.retain(|_, v| *v >= limit),
-        || gram_3.retain(|_, v| *v >= limit),
-        || gram_4.retain(|_, v| *v >= limit)
-    );
+    join!(|| gram_2.retain(|_, v| *v >= limit.0), || gram_3.retain(|_, v| *v >= limit.1), || {
+        gram_4.retain(|_, v| *v >= limit.2)
+    });
     pb.finish_println("");
     println!(
         "......len of gram 1: {}\n......len of gram 2: {}\n\
@@ -138,21 +136,19 @@ fn gen_gram_one(
 pub fn gen_gram(
     path: &str,
     save_path: &str,
-    k_th: (usize, usize, usize, usize),
-    hanzi_v: &Vec<char>,
-    hanzi_m: &HashMap<char, usize>,
-    word_v: &Vec<Vec<usize>>,
-    word_m: &HashMap<Vec<usize>, usize>,
+    k_th: (usize, usize, usize),
+    hanzi_m: &HashMap<char, usize, HB>,
+    word_m: &HashMap<Vec<usize>, usize, HB>,
     jb: &Jieba,
-    gc: usize,
+    gc: (usize, usize, usize),
 ) {
     println!("Generating gram-n");
     let s_time = time::Instant::now();
     let paths = fs::read_dir(path).unwrap();
-    let mut gram_1 = HashMap::new();
-    let mut gram_2 = HashMap::new();
-    let mut gram_3 = HashMap::new();
-    let mut gram_4 = HashMap::new();
+    let mut gram_1 = HashMap::with_hasher(HB::default());
+    let mut gram_2 = HashMap::with_hasher(HB::default());
+    let mut gram_3 = HashMap::with_hasher(HB::default());
+    let mut gram_4 = HashMap::with_hasher(HB::default());
     for path in paths {
         let path = path.unwrap();
         if path.metadata().unwrap().is_file() {
@@ -171,30 +167,6 @@ pub fn gen_gram(
     }
 
     println!("...summaring");
-    macro_rules! cmp {
-        ($a:expr, $c:expr) => {{
-            for i in 0..$a.len() {
-                if $a[i].len() != $c[i].len() {
-                    return $a[i].len().cmp(&$c[i].len());
-                } else if $a[i] != $c[i] {
-                    return $a[i].cmp(&$c[i]);
-                }
-            }
-            Ordering::Equal
-        }};
-    }
-    macro_rules! word {
-        ($w:expr) => {
-            word2hanzi($w, hanzi_v, word_v)
-        };
-    }
-    macro_rules! short {
-        ($g:ident, $kk:expr) => {{
-            let k = $g.len().min($kk);
-            $g.sort_unstable_by(|(_, b), (_, d)| d.cmp(b));
-            $g.truncate(k);
-        }};
-    }
 
     let (mut gram_1, mut gram_2, mut gram_3, mut gram_4) = join!(
         || gram_1.into_iter().collect::<Vec<_>>(),
@@ -203,37 +175,25 @@ pub fn gen_gram(
         || gram_4.into_iter().collect::<Vec<_>>()
     );
 
-    let (mut gram_1, mut gram_2, mut gram_3, mut gram_4) = join!(
-        || {
-            short!(gram_1, k_th.0);
-            gram_1.into_iter().map(|(k, v)| (vec![word!(k)], v)).collect::<Vec<_>>()
-        },
-        || {
-            short!(gram_2, k_th.1);
-            gram_2.into_iter().map(|(k, v)| (vec![word!(k.0), word!(k.1)], v)).collect::<Vec<_>>()
-        },
-        || {
-            short!(gram_3, k_th.2);
-            gram_3
-                .into_iter()
-                .map(|(k, v)| (vec![word!(k.0), word!(k.1), word!(k.2)], v))
-                .collect::<Vec<_>>()
-        },
-        || {
-            short!(gram_4, k_th.3);
-            gram_4
-                .into_iter()
-                .map(|(k, v)| (vec![word!(k.0), word!(k.1), word!(k.2), word!(k.3)], v))
-                .collect::<Vec<_>>()
-        }
-    );
+    macro_rules! short {
+        ($g:ident, $kk:expr) => {{
+            let k = $g.len().min($kk);
+            $g.sort_unstable_by(|(_, b), (_, d)| d.cmp(b));
+            $g.truncate(k);
+        }};
+    }
 
-    join!(
-        || gram_1.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c)),
-        || gram_2.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c)),
-        || gram_3.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c)),
-        || gram_4.sort_unstable_by(|(a, _), (c, _)| cmp!(a, c))
-    );
+    gram_1.sort_unstable_by(|(_, b), (_, d)| d.cmp(b));
+    join!(|| short!(gram_2, k_th.0), || short!(gram_3, k_th.1), || short!(gram_4, k_th.2));
+    let gram_1: Vec<_> = gram_1.into_iter().map(|(k, v)| format!("{} {}\n", k, v)).collect();
+    let gram_2: Vec<_> =
+        gram_2.into_iter().map(|(k, v)| format!("{} {} {}\n", k.0, k.1, v)).collect();
+    let gram_3: Vec<_> =
+        gram_3.into_iter().map(|(k, v)| format!("{} {} {} {}\n", k.0, k.1, k.2, v)).collect();
+    let gram_4: Vec<_> = gram_4
+        .into_iter()
+        .map(|(k, v)| format!("{} {} {} {} {}\n", k.0, k.1, k.2, k.3, v))
+        .collect();
 
     println!(
         "......len of gram 1: {}\n......len of gram 2: {}\n\
@@ -243,18 +203,20 @@ pub fn gen_gram(
         gram_3.len(),
         gram_4.len(),
     );
+
     macro_rules! save {
         ($g:ident, $i:expr) => {{
             println!("...writing gram_{}.txt", $i);
             let fname = &format!("{}/gram_{}.txt", save_path, $i);
             let file = File::create(fname).expect(&format!("Cannot save to {}", fname));
             let mut writer = BufWriter::with_capacity(1024 * 1024 * 32, file);
-            $g.iter().for_each(|(a, b)| {
-                writer.write(format!("{} {}\n", a.join(" "), b).as_bytes()).unwrap();
+            $g.iter().for_each(|s| {
+                writer.write(s.as_bytes()).unwrap();
             });
         }};
     }
     join!(|| save!(gram_1, 1), || save!(gram_2, 2), || save!(gram_3, 3), || save!(gram_4, 4));
+
     println!("...Done!");
     let mils = (time::Instant::now() - s_time).as_millis();
     let mins = mils / 1000 / 60;
@@ -269,10 +231,10 @@ pub fn gen_total_gram(path: &str) {
     let data = serde_json::from_str::<Value>(&data).expect("...Cannot convert to json");
     let data = data.as_object().expect("...Invalid json");
     let mut sum = 0.0;
-    let mut gram_1 = HashMap::new();
-    let mut gram_2 = HashMap::new();
-    let mut gram_3 = HashMap::new();
-    let mut gram_4 = HashMap::new();
+    let mut gram_1 = HashMap::with_hasher(HB::default());
+    let mut gram_2 = HashMap::with_hasher(HB::default());
+    let mut gram_3 = HashMap::with_hasher(HB::default());
+    let mut gram_4 = HashMap::with_hasher(HB::default());
     data.iter().for_each(|(k, v)| {
         let w = v.as_f64().expect("...Invalid number");
         macro_rules! go {
@@ -285,8 +247,7 @@ pub fn gen_total_gram(path: &str) {
                     let line = line.unwrap();
                     let pos = line.rfind(" ").unwrap();
                     let p = line[pos + 1..].parse::<f64>().unwrap();
-                    let ws: Vec<_> =
-                        line[0..pos].split_whitespace().map(|s| s.to_string()).collect();
+                    let ws = line[0..pos].to_string();
                     *$g.entry(ws).or_insert(0.0) += p * w;
                 });
             }};
@@ -302,22 +263,13 @@ pub fn gen_total_gram(path: &str) {
     );
     macro_rules! save {
         ($g:expr, $i:expr) => {{
-            $g.sort_unstable_by(|(a, _), (c, _)| {
-                for i in 0..a.len() {
-                    if a[i].len() != c[i].len() {
-                        return a[i].len().cmp(&c[i].len());
-                    } else if a[i] != c[i] {
-                        return a[i].cmp(&c[i]);
-                    }
-                }
-                Ordering::Equal
-            });
+            $g.sort_unstable_by(|(_, b), (_, d)| d.cmp(b));
             let fname = &format!("{}/gram_{}.txt", path, $i);
             let file = File::create(fname).expect(&format!("Cannot save to {}", fname));
             let mut writer = BufWriter::with_capacity(1024 * 1024 * 32, file);
             $g.iter().for_each(|(a, b)| {
                 if *b != 0 {
-                    writer.write(format!("{} {}\n", a.join(" "), b).as_bytes()).unwrap();
+                    writer.write(format!("{} {}\n", a, b).as_bytes()).unwrap();
                 }
             })
         }};
@@ -329,7 +281,7 @@ pub fn gen_total_gram(path: &str) {
 fn word_filter(
     s: &str,
     data: &mut HashSet<String>,
-    hanzi_m: &HashMap<char, usize>,
+    hanzi_m: &HashMap<char, usize, HB>,
     max_len: usize,
 ) {
     s.split_whitespace().for_each(|a| {
@@ -351,7 +303,7 @@ fn word_filter(
 fn gen_word_one(
     path: &str,
     data: &mut HashSet<String>,
-    hanzi_m: &HashMap<char, usize>,
+    hanzi_m: &HashMap<char, usize, HB>,
     max_len: usize,
 ) {
     println!("...Working on {}", path);
@@ -368,7 +320,7 @@ pub fn gen_word(
     path: &str,
     ref_path: &str,
     save_path: &str,
-    hanzi_m: &HashMap<char, usize>,
+    hanzi_m: &HashMap<char, usize, HB>,
     max_len: usize,
 ) {
     println!("Generating word");
@@ -386,7 +338,7 @@ pub fn gen_word(
     let mut data: Vec<_> = data.into_iter().collect();
     data.sort_by(|a, b| if a.len() != b.len() { a.len().cmp(&b.len()) } else { a.cmp(b) });
 
-    let mut ref_py = HashMap::new();
+    let mut ref_py = HashMap::with_hasher(HB::default());
     fs::read_to_string(ref_path).expect(&format!("...Cannot read {}", ref_path)).lines().for_each(
         |line| {
             let mut data: Vec<_> = line.split_whitespace().collect();
@@ -463,9 +415,9 @@ pub fn gen_jieba_dict(save_path: &str, hanzi_v: &Vec<char>, word_v: &Vec<Vec<usi
     println!("...Done!");
 }
 
-pub fn gen_sen<F>(path: &str, save_path: &str, hanzi_m: &HashMap<char, usize>, gen_sen_one: F)
+pub fn gen_sen<F>(path: &str, save_path: &str, hanzi_m: &HashMap<char, usize, HB>, gen_sen_one: F)
 where
-    F: Fn(&str, &mut BufWriter<File>, &HashMap<char, usize>) -> usize,
+    F: Fn(&str, &mut BufWriter<File>, &HashMap<char, usize, HB>) -> usize,
 {
     println!("Generating sina sentence");
     let paths = fs::read_dir(path).unwrap();
@@ -546,7 +498,7 @@ pub fn digit2chinese(s: &[char]) -> String {
     s
 }
 
-pub fn line_filter(s: &str, hanzi_m: &HashMap<char, usize>) -> String {
+pub fn line_filter(s: &str, hanzi_m: &HashMap<char, usize, HB>) -> String {
     let mut len = 0;
     let mut valid = false;
     let s: Vec<_> = s.chars().collect();
@@ -554,7 +506,7 @@ pub fn line_filter(s: &str, hanzi_m: &HashMap<char, usize>) -> String {
     let mut i = 0;
     let mut upd = |cc: char| {
         if !cc.is_alphanumeric()
-            && !"~@#$%^&*()_+{}|<>`-=[]'/￥…（）—“”《》·【】、‘’".contains(cc)
+            && !"~@#$%^&*()_+{}|<>`-=[]'/￥…（）—“”《》·【】、‘’.".contains(cc)
         {
             len = 0;
             return;
@@ -591,8 +543,8 @@ pub fn gen_dev(
     path: &str,
     input_path: &str,
     answer_path: &str,
-    hanzi_m: &HashMap<char, usize>,
-    word_m: &HashMap<Vec<usize>, usize>,
+    hanzi_m: &HashMap<char, usize, HB>,
+    word_m: &HashMap<Vec<usize>, usize, HB>,
     pinyin_v: &Vec<Vec<String>>,
     jb: &Jieba,
 ) {
@@ -608,7 +560,7 @@ pub fn gen_dev(
         }
         line.split_whitespace().for_each(|ws| {
             let cnt = ws.chars().count();
-            if ws.contains("_") || cnt < 5 || cnt > 20 {
+            if ws.contains("_") || cnt < 5 || cnt > 15 {
                 return;
             }
             let v: Vec<_> = jb
@@ -620,6 +572,7 @@ pub fn gen_dev(
         });
     });
     data.shuffle(&mut thread_rng());
+    data.truncate(3000);
     let pinyin = data.iter().map(|a| a.0.as_str()).collect::<Vec<_>>();
     let text = data.iter().map(|a| a.1).collect::<Vec<_>>();
     let errmsg = &format!("...Cannot save to {}", input_path);

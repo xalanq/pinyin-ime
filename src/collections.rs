@@ -1,5 +1,6 @@
 use crate::gen::line_filter;
 use crate::max_lines::*;
+use crate::HB;
 use rayon::current_num_threads;
 use rayon::prelude::*;
 use serde_json::Value;
@@ -8,7 +9,11 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::sync::Mutex;
 
-pub fn gen_sina(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char, usize>) -> usize {
+pub fn gen_sina(
+    path: &str,
+    writer: &mut BufWriter<File>,
+    hanzi_m: &HashMap<char, usize, HB>,
+) -> usize {
     println!("...Working on {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
     let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
@@ -24,11 +29,30 @@ pub fn gen_sina(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char
                 if let Ok(mut raw) = serde_json::from_str::<Value>(line.as_ref().unwrap()) {
                     let mut tot = String::new();
                     let mut cnt = 0;
+                    let mut html: String =
+                        serde_json::from_value(raw["html"].take()).expect("Invalid html");
+                    let title: String =
+                        serde_json::from_value(raw["title"].take()).expect("Invalid html");
+                    if let Some(p) = html.find("（记者") {
+                        if let Some(mut g) = html.find("）") {
+                            if p < g {
+                                g += "）".len();
+                                html = format!("{} {}", &html[..g], &html[g..]);
+                            }
+                        }
+                    }
+                    let mut s1 = &html[..];
+                    let s2 = &title[..];
+                    if html.starts_with("原标题") {
+                        if let Some(p) = html.find(&title) {
+                            s1 = &html[p + title.len()..];
+                        } else {
+                            s1 = &html["原标题".len()..];
+                        }
+                    }
                     macro_rules! go {
-                        ($key:expr) => {{
-                            let s: String =
-                                serde_json::from_value(raw[$key].take()).expect("Invalid html");
-                            let s = line_filter(&s, hanzi_m);
+                        ($s:expr) => {{
+                            let s = line_filter($s, hanzi_m);
                             if s.len() > 0 {
                                 tot.push_str(&s);
                                 tot.push('\n');
@@ -36,8 +60,8 @@ pub fn gen_sina(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char
                             }
                         }};
                     }
-                    go!("html");
-                    go!("title");
+                    go!(s2);
+                    go!(s1);
                     if cnt > 0 {
                         data_tmp.push(tot);
                         count_tmp += cnt;
@@ -56,7 +80,11 @@ pub fn gen_sina(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char
     count.into_inner().unwrap()
 }
 
-pub fn gen_raw(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char, usize>) -> usize {
+pub fn gen_raw(
+    path: &str,
+    writer: &mut BufWriter<File>,
+    hanzi_m: &HashMap<char, usize, HB>,
+) -> usize {
     println!("...Working on {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
     let buf = BufReader::with_capacity(1024 * 1024 * 32, file);

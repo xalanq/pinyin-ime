@@ -1,8 +1,8 @@
-use crate::{load, max_lines::*};
+use crate::{load, max_lines::*, HB};
 use rayon::current_num_threads;
 use rayon::prelude::*;
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap};
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::sync::Mutex;
@@ -48,28 +48,23 @@ pub fn score_list(answer: &[String], predict: &[String]) -> (f64, f64) {
 
 pub struct PinyinIME {
     hanzi_v: Vec<char>,
-    // hanzi_m: HashMap<char, usize>,
     word_v: Vec<Vec<usize>>,
-    // word_m: HashMap<Vec<usize>, usize>,
-    pinyin_m: HashMap<String, Vec<usize>>,
-    gram_1: HashMap<usize, usize>,                 // w
-    gram_2: HashMap<(usize, usize), usize>,        // (w1, w)
-    gram_3: HashMap<(usize, usize, usize), usize>, // (w2, w1, w)
-    // gram_4: HashMap<(usize, usize, usize, usize), usize>,
-    sum_1: f64, // sum of gram_1
-    sum_2: f64, // sum of gram_2
-    sum_3: f64, // sum of gram_3
-    // sum_4: f64,                                  // sum of gram_4
+    pinyin_m: HashMap<String, Vec<usize>, HB>,
+    gram_1: HashMap<usize, f64, HB>, // w
+    // gram: HashMap<(usize, usize), f64, HB>,        // (w1, w)
+    gram: HashMap<(usize, usize, usize), f64, HB>, // (w2, w1, w)
+    // gram: HashMap<(usize, usize, usize, usize), f64, HB>, // (w3, w2, w1, w)
     max_len: usize,
-    lambda: f64, // P(a|b) = lambda * P(a|b) + (1.0 - lambda) * P(a)
 }
 
-struct State {
-    pub pos: usize,        // position of next word's beginning
-    pub w1: usize,         // last and nearest word
-    pub w2: Option<usize>, // ahead of w1
-    // pub w3: Option<usize>, // ahead of w2
+struct Node {
+    pub pos: usize, // position of next word's beginning
+    pub w1: usize,  // last and nearest word
+    pub w2: usize,  // ahead of w1
+    // pub w3: usize, // ahead of w2
     pub prev: usize, // previous index in pool
+    pub vis: bool,
+    pub p: f64,
 }
 
 #[derive(Copy, Clone, PartialEq, PartialOrd)]
@@ -104,7 +99,7 @@ struct Node {
 */
 
 impl PinyinIME {
-    fn preprocess(&self, pinyin: &str) -> (usize, Vec<Vec<(usize, &Vec<usize>)>>) {
+    fn preprocess(&self, pinyin: &str) -> (usize, Vec<Vec<(usize, &Vec<usize>, Vec<f64>)>>) {
         let items: Vec<_> = pinyin.split_whitespace().collect();
         let mut pre = Vec::new();
         for i in 0..items.len() {
@@ -116,7 +111,8 @@ impl PinyinIME {
                 }
                 s.push_str(&items[j].to_lowercase());
                 if let Some(v) = self.pinyin_m.get(&s) {
-                    ava.push((j + 1, v));
+                    let g: Vec<_> = v.iter().map(|w| *self.gram_1.get(w).unwrap()).collect();
+                    ava.push((j + 1, v, g));
                 }
             }
             pre.push(ava);
@@ -175,14 +171,13 @@ impl PinyinIME {
     }
     */
 
+    /*
     pub fn kth_shortest_small(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
         let (len, pre) = self.preprocess(pinyin);
-        let lbd = self.lambda;
-        let ilb = 1.0 - self.lambda;
         let mut heap = BinaryHeap::new();
         let mut pool = vec![];
         let mut ans: Vec<AnsState> = Vec::new(); // left -> right, max -> min , rust has no min-max-heap
-        pool.push(State { pos: 0, w1: 0, w2: None, prev: 0 });
+        pool.push(State { pos: 0, w1: 0, w2: 0, prev: 0 });
         // pool.push(SaveState { pos: 0, w1: 0, w2: None, w3: None, prev: 0 });
         heap.push(HeapState { p: 0.0, idx: 0 });
         // let mut cnt = 0;
@@ -278,12 +273,14 @@ impl PinyinIME {
         });
         ans_s
     }
+    */
 
     pub fn evals(&self, pinyin: &str, max_ans: usize) -> Vec<(String, f64)> {
         if pinyin.len() == 0 || max_ans == 0 {
             return Vec::new();
         }
-        self.kth_shortest_small(pinyin, max_ans)
+        vec![]
+        // self.kth_shortest_small(pinyin, max_ans)
     }
 
     pub fn eval(&self, pinyin: &str) -> Option<(String, f64)> {
@@ -291,87 +288,60 @@ impl PinyinIME {
             return None;
         }
         let (len, pre) = self.preprocess(pinyin);
-        let lbd = self.lambda;
-        let ilb = 1.0 - self.lambda;
         let mut heap = BinaryHeap::new();
-        let mut vis = HashSet::new();
         let mut pool = vec![];
+        let mut node2id = HashMap::with_hasher(HB::default());
         let mut ans: Option<AnsState> = None;
-        pool.push(State { pos: 0, w1: 0, w2: None, prev: 0 });
-        // pool.push(SaveState { pos: 0, w1: 0, w2: None, w3: None, prev: 0 });
+        pool.push(Node { pos: 0, w1: 0, w2: 0, prev: 0, vis: false, p: 0.0 });
         heap.push(HeapState { p: 0.0, idx: 0 });
+        node2id.insert((0, 0, 0), 0);
         // let mut cnt = 0;
-        while let Some(HeapState { p, idx }) = heap.pop() {
+        while let Some(HeapState { p: _, idx }) = heap.pop() {
             // cnt += 1;
-            let State { pos, w1, w2, prev: _ } = pool[idx];
-            if vis.contains(&(pos, w1, w2)) {
+            if pool[idx].vis {
                 continue;
             }
-            vis.insert((pos, w1, w2));
-            // let State { pos, w1, w2, w3, prev: _ } = pool[idx];
-            let fm_2 = if let Some(&fm) = self.gram_1.get(&w1) {
-                Some(self.sum_1 / self.sum_2 / fm as f64)
-            } else {
-                None
-            };
-            /*
-            let fm_3 = if let Some(w2) = w2 {
-                if let Some(&fm) = self.gram_2.get(&(w2, w1)) {
-                    Some(self.sum_2 / self.sum_3 / fm as f64)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            */
+            pool[idx].vis = true;
+            let Node { pos, w1, w2, prev: _, vis: _, p } = pool[idx];
             pre[pos].iter().for_each(|candi| {
-                let (nxt, words) = candi;
-                let nxt = *nxt;
-                let mut probs: Vec<Option<f64>> = vec![None; words.len()];
+                let nxt = candi.0;
+                let words = candi.1;
+                let g_1 = &candi.2;
+                let mut probs: Vec<f64> = vec![0.0; words.len()];
 
-                if let Some(fm) = fm_2 {
-                    words.iter().enumerate().for_each(|(i, &w)| {
-                        let t = *self.gram_2.get(&(w1, w)).unwrap_or(&0);
-                        let p = lbd * t as f64 * fm;
-                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                    });
+                for i in 0..words.len() {
+                    if let Some(&p) = self.gram.get(&(w2, w1, words[i])) {
+                        probs[i] = probs[i].max(p);
+                    }
                 }
 
-                /*
-                if let Some(fm) = fm_3 {
-                    words.iter().enumerate().for_each(|(i, &w)| {
-                        let t = *self.gram_3.get(&(w2.unwrap(), w1, w)).unwrap_or(&0);
-                        let p = lbd * t as f64 * fm;
-                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                    });
-                }
-                */
-
-                words.iter().enumerate().for_each(|(i, w)| {
-                    if let Some(&t) = self.gram_1.get(w) {
-                        let p = ilb * t as f64 / self.sum_1;
-                        probs[i] = Some(probs[i].unwrap_or(0.0) + p);
-                    }
-                    if let Some(ref mut p) = probs[i] {
-                        *p = p.ln();
-                    }
-                });
-
-                words.iter().enumerate().for_each(|(i, &w)| {
-                    if let Some(cp) = probs[i] {
-                        let np = cp + p;
-                        if ans.is_none() || np > ans.unwrap().p {
-                            if nxt == len {
-                                ans = Some(AnsState { p: np, w, prev: idx });
-                            } else {
-                                let y = State { pos: nxt, w1: w, w2: Some(w1), prev: idx };
-                                pool.push(y);
-                                heap.push(HeapState { p: np, idx: pool.len() - 1 });
+                for i in 0..words.len() {
+                    let np = p + (probs[i] + g_1[i]).ln();
+                    if ans.is_none() || np > ans.unwrap().p {
+                        let w = words[i];
+                        if nxt == len {
+                            ans = Some(AnsState { p: np, w, prev: idx });
+                        } else {
+                            let nid = *node2id.entry((nxt, w, w1)).or_insert_with(|| {
+                                pool.push(Node {
+                                    pos: nxt,
+                                    w1: w,
+                                    w2: w1,
+                                    prev: idx,
+                                    vis: false,
+                                    p: np - 1.0,
+                                });
+                                pool.len() - 1
+                            });
+                            if pool[nid].p < np {
+                                assert!(!pool[nid].vis);
+                                pool[nid].prev = idx;
+                                pool[nid].p = np;
+                                heap.push(HeapState { p: np, idx: nid });
                             }
                         }
                     }
-                });
+                }
             });
         }
         // println!("cnt: {}", cnt);
@@ -389,6 +359,7 @@ impl PinyinIME {
         ws.iter()
             .rev()
             .for_each(|w| s.push_str(&load::word2hanzi(*w, &self.hanzi_v, &self.word_v)));
+        // println!("{}", st.p);
         Some((s, st.p))
     }
 
@@ -406,9 +377,6 @@ impl PinyinIME {
         let mut tot = 0;
         let (mut sum_acc, mut sum_f1) = (0, 0.0);
         reader.max_lines(max_lines).zip(answer.max_lines(max_lines)).for_each(|(a, b)| {
-            if tot >= 2000 {
-                return;
-            }
             let slice: Vec<_> = a.into_iter().zip(b.into_iter()).enumerate().collect();
             let preds = Mutex::new(vec![String::new(); slice.len()]);
             let (a, b) = (Mutex::new(0), Mutex::new(0.0));
@@ -444,8 +412,8 @@ impl PinyinIME {
             println!("...Finished {}", tot);
         });
         println!("Total lines: {}", tot);
-        println!("acc:   {:.2}", sum_acc as f64 / tot as f64);
-        println!("f1:    {:.2}", sum_f1 as f64 / tot as f64);
+        println!("acc:   {:.3}", sum_acc as f64 / tot as f64);
+        println!("f1:    {:.3}", sum_f1 as f64 / tot as f64);
         let mils = (time::Instant::now() - s_time).as_millis();
         let mins = mils / 1000 / 60;
         let secs = mils / 1000 - mins * 60;
@@ -492,37 +460,59 @@ impl PinyinIME {
         println!("Exit...");
     }
 
-    pub fn new(config_path: &str) -> Self {
+    pub fn new(config_path: &str, data_path: &str) -> Self {
+        macro_rules! pt {
+            ($b:expr) => {
+                &format!("{}/{}", data_path, $b)
+            };
+        }
+
         let (lambda, max_len) = load::load_config(config_path);
         let s_time = time::Instant::now();
 
         println!("Initializing Pinyin IME (lambda: {}, max_len: {})", lambda, max_len);
-        let (hanzi_v, hanzi_m) = load::load_hanzi("./data/hanzi.txt");
-        let (word_v, word_m, _, pinyin_m) = load::load_word("./data/word.txt", &hanzi_m);
-        let (gram_1, gram_2, gram_3) = load::load_gram("./data", &hanzi_m, &word_m);
-        // let (gram_1, gram_2, gram_3, gram_4) = load::load_gram("./data", &hanzi_m, &word_m);
-        let sum_1 = gram_1.iter().map(|(_, v)| *v).sum::<usize>() as f64;
-        let sum_2 = gram_2.iter().map(|(_, v)| *v).sum::<usize>() as f64;
-        let sum_3 = gram_3.iter().map(|(_, v)| *v).sum::<usize>() as f64;
+        let (hanzi_v, hanzi_m) = load::load_hanzi(pt!("hanzi.txt"));
+        let (word_v, pinyin_m) = load::load_eval_word(pt!("word.txt"), &hanzi_m);
+
+        let mut gram_1 = load::load_gram_1(pt!("gram_1.txt"));
+        for i in 0..word_v.len() {
+            gram_1.entry(i).or_insert(1.0);
+        }
+        let sum_1: f64 = gram_1.iter().map(|(_, v)| *v).sum();
+        gram_1.iter_mut().for_each(|(_, v)| *v = *v * (1.0 - lambda) / sum_1);
+
+        /*
+        let mut gram = load::load_gram_2(pt!("gram_2.txt"));
+        let mut sum = HashMap::with_hasher(HB::default());
+        gram.iter().for_each(|(k, v)| {
+            *sum.entry(k.0).or_insert(0.0) += v;
+        });
+        gram.iter_mut().for_each(|(k, v)| *v = *v * lambda / sum.get(k).unwrap());
+        */
+
+        let mut gram = load::load_gram_3(pt!("gram_3.txt"));
+        let mut sum = HashMap::with_hasher(HB::default());
+        println!("Pre-processing");
+        gram.iter().for_each(|(k, v)| {
+            *sum.entry((k.0, k.1)).or_insert(0.0) += v;
+        });
+        gram.iter_mut().for_each(|(k, v)| *v = *v * lambda / sum.get(&(k.0, k.1)).unwrap());
+
+        /*
+        let mut gram = load::load_gram_4(pt!("gram_4.txt"));
+        let mut sum = HashMap::with_hasher(HB::default());
+        gram.iter().for_each(|(k, v)| {
+            *sum.entry((k.0, k.1, k.2)).or_insert(0.0) += v;
+        });
+        gram.iter_mut().for_each((|(k, v)| *v = *v * lambda / sum.get(&(k.0, k.1, k.2)).unwrap());
+        */
 
         let mils = (time::Instant::now() - s_time).as_millis();
         let mins = mils / 1000 / 60;
         let secs = mils / 1000 - mins * 60;
         println!("Done! Total cost {}m {}s.", mins, secs);
 
-        Self {
-            hanzi_v,
-            word_v,
-            pinyin_m,
-            gram_1,
-            gram_2,
-            gram_3,
-            sum_1,
-            sum_2,
-            sum_3,
-            max_len,
-            lambda,
-        }
+        Self { hanzi_v, word_v, pinyin_m, gram_1, gram, max_len }
         // Self { hanzi_v, word_v, pinyin_m, sum_1, gram_1, gram_2, gram_3, gram_4, max_len, lambda }
     }
 }

@@ -1,13 +1,14 @@
+use crate::HB;
 use jieba_rs::Jieba;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 
-pub fn load_hanzi(path: &str) -> (Vec<char>, HashMap<char, usize>) {
+pub fn load_hanzi(path: &str) -> (Vec<char>, HashMap<char, usize, HB>) {
     println!("Loading hanzi from {}", path);
     let mut x = Vec::new();
-    let mut y = HashMap::new();
+    let mut y = HashMap::with_hasher(HB::default());
     fs::read_to_string(path).expect(&format!("...Cannot read {}", path)).chars().for_each(|c| {
         y.entry(c).or_insert_with(|| {
             x.push(c);
@@ -20,17 +21,53 @@ pub fn load_hanzi(path: &str) -> (Vec<char>, HashMap<char, usize>) {
     (x, y)
 }
 
-pub fn load_word(
+pub fn load_eval_word(
     path: &str,
-    hanzi_m: &HashMap<char, usize>,
-) -> (Vec<Vec<usize>>, HashMap<Vec<usize>, usize>, Vec<Vec<String>>, HashMap<String, Vec<usize>>) {
+    hanzi_m: &HashMap<char, usize, HB>,
+) -> (Vec<Vec<usize>>, HashMap<String, Vec<usize>, HB>) {
     println!("Loading word from {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
     let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
     let mut word_v = Vec::new();
-    let mut word_m = HashMap::new();
+    let mut pinyin_m = HashMap::with_hasher(HB::default());
+    word_v.push(Vec::new()); // start
+    word_v.push(Vec::new()); // unknown
+    buf.lines().for_each(|line| {
+        let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
+        if let Some(mut word) = hanzi2vec(data[0], hanzi_m) {
+            word.shrink_to_fit();
+            word_v.push(word.clone());
+            let id = word_v.len() - 1;
+            data[1..]
+                .iter()
+                .for_each(|s| pinyin_m.entry(s.to_string()).or_insert(Vec::new()).push(id));
+        }
+    });
+    pinyin_m.iter_mut().for_each(|(_, v)| {
+        v.shrink_to_fit();
+    });
+    word_v.shrink_to_fit();
+    pinyin_m.shrink_to_fit();
+    println!("...Loaded!");
+    (word_v, pinyin_m)
+}
+
+pub fn load_word(
+    path: &str,
+    hanzi_m: &HashMap<char, usize, HB>,
+) -> (
+    Vec<Vec<usize>>,
+    HashMap<Vec<usize>, usize, HB>,
+    Vec<Vec<String>>,
+    HashMap<String, Vec<usize>, HB>,
+) {
+    println!("Loading word from {}", path);
+    let file = File::open(path).expect(&format!("......Cannot open {}", path));
+    let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
+    let mut word_v = Vec::new();
+    let mut word_m = HashMap::with_hasher(HB::default());
     let mut pinyin_v = Vec::new();
-    let mut pinyin_m = HashMap::new();
+    let mut pinyin_m = HashMap::with_hasher(HB::default());
     word_v.push(Vec::new()); // start
     word_v.push(Vec::new()); // unknown
     pinyin_v.push(Vec::new());
@@ -70,64 +107,62 @@ pub fn load_jieba(path: &str) -> Jieba {
     ret
 }
 
-pub fn load_gram(
-    path: &str,
-    hanzi_m: &HashMap<char, usize>,
-    word_m: &HashMap<Vec<usize>, usize>,
-) -> (
-    HashMap<usize, usize>,
-    HashMap<(usize, usize), usize>,
-    HashMap<(usize, usize, usize), usize>,
-    // HashMap<(usize, usize, usize, usize), usize>,
-) {
-    println!("Loading gram");
-    let mut gram_1 = HashMap::new();
-    let mut gram_2 = HashMap::new();
-    let mut gram_3 = HashMap::new();
-    // let mut gram_4 = HashMap::new();
-    macro_rules! word {
-        ($s:expr) => {
-            hanzi2word(&$s, hanzi_m, word_m).unwrap()
-        };
-    }
-    macro_rules! load {
-        ($i:expr, $c:expr) => {{
-            let fname = &format!("{}/gram_{}.txt", path, $i);
-            println!("...Working on {}", fname);
-            let file = File::open(fname).expect(&format!("......Cannot open {}", fname));
-            let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
-            buf.lines().for_each($c);
-        }};
-    }
-    join!(
-        || load!(1, |line| {
-            let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
-            let num = data[data.len() - 1].parse::<usize>().unwrap();
-            gram_1.insert(word!(data[0]), num);
-        }),
-        || load!(2, |line| {
-            let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
-            let num = data[data.len() - 1].parse::<usize>().unwrap();
-            gram_2.insert((word!(data[0]), word!(data[1])), num);
-        }),
-        || load!(3, |line| {
-            let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
-            let num = data[data.len() - 1].parse::<usize>().unwrap();
-            gram_3.insert((word!(data[0]), word!(data[1]), word!(data[2])), num);
-        }) /*,
-           || load!(1, |line| {
-               let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
-               let num = data[data.len() - 1].parse::<usize>().unwrap();
-               gram_4.insert((word!(data[0]), word!(data[1]), word!(data[2]), word!(data[3])), num);
-           })*/
-    );
-    gram_1.shrink_to_fit();
-    gram_2.shrink_to_fit();
-    gram_3.shrink_to_fit();
-    // gram_4.shrink_to_fit();
+pub fn load_gram(path: &str, idx: usize) -> Vec<Vec<usize>> {
+    println!("Loading gram {}", idx);
+    let file = File::open(path).expect(&format!("......Cannot open {}", path));
+    let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
+    let mut gram = Vec::new();
+    buf.lines().for_each(|line| {
+        let data: Vec<_> = line
+            .as_ref()
+            .unwrap()
+            .split_whitespace()
+            .map(|s| s.parse::<usize>().unwrap())
+            .collect();
+        gram.push(data);
+    });
+    gram.shrink_to_fit();
+    gram
+}
+
+pub fn load_gram_1(path: &str) -> HashMap<usize, f64, HB> {
+    let v = load_gram(path, 1);
+    let mut gram = HashMap::with_capacity_and_hasher(v.len(), HB::default());
+    v.iter().for_each(|k| {
+        gram.insert(k[0], k[1] as f64);
+    });
     println!("...Loaded!");
-    (gram_1, gram_2, gram_3)
-    // (gram_1, gram_2, gram_3, gram_4)
+    gram
+}
+
+pub fn load_gram_2(path: &str) -> HashMap<(usize, usize), f64, HB> {
+    let v = load_gram(path, 2);
+    let mut gram = HashMap::with_capacity_and_hasher(v.len(), HB::default());
+    v.iter().for_each(|k| {
+        gram.insert((k[0], k[1]), k[2] as f64);
+    });
+    println!("...Loaded!");
+    gram
+}
+
+pub fn load_gram_3(path: &str) -> HashMap<(usize, usize, usize), f64, HB> {
+    let v = load_gram(path, 3);
+    let mut gram = HashMap::with_capacity_and_hasher(v.len(), HB::default());
+    v.iter().for_each(|k| {
+        gram.insert((k[0], k[1], k[2]), k[3] as f64);
+    });
+    println!("...Loaded!");
+    gram
+}
+
+pub fn load_gram_4(path: &str) -> HashMap<(usize, usize, usize, usize), f64, HB> {
+    let v = load_gram(path, 4);
+    let mut gram = HashMap::with_capacity_and_hasher(v.len(), HB::default());
+    v.iter().for_each(|k| {
+        gram.insert((k[0], k[1], k[2], k[3]), k[4] as f64);
+    });
+    println!("...Loaded!");
+    gram
 }
 
 pub fn load_config(config_path: &str) -> (f64, usize) {
@@ -149,7 +184,7 @@ pub fn load_config(config_path: &str) -> (f64, usize) {
     (lambda, max_len as usize)
 }
 
-pub fn hanzi2vec(s: &str, hanzi_m: &HashMap<char, usize>) -> Option<Vec<usize>> {
+pub fn hanzi2vec(s: &str, hanzi_m: &HashMap<char, usize, HB>) -> Option<Vec<usize>> {
     let mut v = Vec::new();
     for c in s.chars() {
         match hanzi_m.get(&c) {
@@ -175,8 +210,8 @@ pub fn word2hanzi(word: usize, hanzi_v: &Vec<char>, word_v: &Vec<Vec<usize>>) ->
 
 pub fn hanzi2word(
     word: &str,
-    hanzi_m: &HashMap<char, usize>,
-    word_m: &HashMap<Vec<usize>, usize>,
+    hanzi_m: &HashMap<char, usize, HB>,
+    word_m: &HashMap<Vec<usize>, usize, HB>,
 ) -> Option<usize> {
     if word == "^" {
         return Some(0); // start
