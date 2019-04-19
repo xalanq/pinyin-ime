@@ -210,6 +210,7 @@ dependencies = [
  "jieba-rs 0.2.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "pbr 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "pinyin 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.89 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.39 (registry+https://github.com/rust-lang/crates.io-index)",

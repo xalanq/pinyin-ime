@@ -23,36 +23,41 @@ pub fn load_hanzi(path: &str) -> (Vec<char>, HashMap<char, usize>) {
 pub fn load_word(
     path: &str,
     hanzi_m: &HashMap<char, usize>,
-) -> (Vec<Vec<usize>>, HashMap<Vec<usize>, usize>, HashMap<String, Vec<usize>>) {
+) -> (Vec<Vec<usize>>, HashMap<Vec<usize>, usize>, Vec<Vec<String>>, HashMap<String, Vec<usize>>) {
     println!("Loading word from {}", path);
     let file = File::open(path).expect(&format!("......Cannot open {}", path));
     let buf = BufReader::with_capacity(1024 * 1024 * 32, file);
     let mut word_v = Vec::new();
     let mut word_m = HashMap::new();
-    let mut pinyin = HashMap::new();
+    let mut pinyin_v = Vec::new();
+    let mut pinyin_m = HashMap::new();
     word_v.push(Vec::new()); // start
     word_v.push(Vec::new()); // unknown
+    pinyin_v.push(Vec::new());
+    pinyin_v.push(Vec::new());
     buf.lines().for_each(|line| {
         let data: Vec<_> = line.as_ref().unwrap().split_whitespace().collect();
         if let Some(mut word) = hanzi2vec(data[0], hanzi_m) {
             word.shrink_to_fit();
             let id = word_m.entry(word.clone()).or_insert_with(|| {
                 word_v.push(word.clone());
+                pinyin_v.push(data[1..].iter().map(|s| s.to_string()).collect::<Vec<_>>());
                 word_v.len() - 1
             });
             data[1..]
                 .iter()
-                .for_each(|s| pinyin.entry(s.to_string()).or_insert(Vec::new()).push(*id));
+                .for_each(|s| pinyin_m.entry(s.to_string()).or_insert(Vec::new()).push(*id));
         }
     });
-    pinyin.iter_mut().for_each(|(_, v)| {
+    pinyin_m.iter_mut().for_each(|(_, v)| {
         v.shrink_to_fit();
     });
     word_v.shrink_to_fit();
     word_m.shrink_to_fit();
-    pinyin.shrink_to_fit();
+    pinyin_v.shrink_to_fit();
+    pinyin_m.shrink_to_fit();
     println!("...Loaded!");
-    (word_v, word_m, pinyin)
+    (word_v, word_m, pinyin_v, pinyin_m)
 }
 
 pub fn load_jieba(path: &str) -> Jieba {
@@ -125,13 +130,23 @@ pub fn load_gram(
     // (gram_1, gram_2, gram_3, gram_4)
 }
 
-pub fn load_config(config_path: &str) -> f64 {
+pub fn load_config(config_path: &str) -> (f64, usize) {
     println!("Loading config from {}", config_path);
     let data =
         fs::read_to_string(config_path).expect(&format!("...Unable to read {}", config_path));
     let data = serde_json::from_str::<Value>(&data).expect("...Cannot convert to json");
     let data = data.as_object().expect("...Invalid json");
-    data.get("lambda").expect("...No lambda field").as_f64().expect("...lambda is not a number")
+    let lambda = data
+        .get("lambda")
+        .expect("...No lambda field")
+        .as_f64()
+        .expect("...lambda is not a number");
+    let max_len = data
+        .get("max_len")
+        .expect("...No max_len field")
+        .as_u64()
+        .expect("...max_len is not a number");
+    (lambda, max_len as usize)
 }
 
 pub fn hanzi2vec(s: &str, hanzi_m: &HashMap<char, usize>) -> Option<Vec<usize>> {

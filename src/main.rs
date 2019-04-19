@@ -4,32 +4,41 @@ use pinyin_ime::collections as col;
 use pinyin_ime::gen;
 use pinyin_ime::load::*;
 */
-// use pinyin_ime::eval;
+use pinyin_ime::eval;
 use pinyin_ime::eval::PinyinIME;
 use std::env;
 
 fn main() {
     /*
     let (hanzi_v, hanzi_m) = load_hanzi("./data/hanzi.txt");
-    // gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 7);
-    // gen::gen_sen("./tmp/raw/sina", "./tmp/text/sina/sina.txt", &hanzi_m, col::gen_sina);
-    // gen::gen_sen("./tmp/raw/student", "./tmp/text/student/student.txt", &hanzi_m, col::gen_raw);
+    gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 7);
+    gen::gen_sen("./tmp/raw/sina", "./tmp/text/sina/sina.txt", &hanzi_m, col::gen_sina);
+    gen::gen_sen("./tmp/raw/student", "./tmp/text/student/student.txt", &hanzi_m, col::gen_raw);
+    gen::gen_sen("./tmp/raw/test", "./tmp/text/test/sina.txt", &hanzi_m, col::gen_sina);
 
-    let (word_v, word_m, _) = load_word("./data/word.txt", &hanzi_m);
-    // gen::gen_jieba_dict("./data/jieba.txt", &hanzi_v, &word_v);
+    let (word_v, word_m, pinyin_v, _) = load_word("./data/word.txt", &hanzi_m);
+    gen::gen_jieba_dict("./data/jieba.txt", &hanzi_v, &word_v);
     let jb = load_jieba("./data/jieba.txt");
+    gen::gen_dev(
+        "./tmp/text/test/sina.txt",
+        "./tmp/text/test/input.txt",
+        "./tmp/text/test/answer.txt",
+        &hanzi_m,
+        &word_m,
+        &pinyin_v,
+        &jb,
+    );
 
-    /*
     gen::gen_gram(
         "./tmp/text/sina",
         "./data/sina",
-        (1000000, 1000000, 1000000, 1000000),
+        (1000000, 2000000, 2000000, 2000000),
         &hanzi_v,
         &hanzi_m,
         &word_v,
         &word_m,
         &jb,
-        5,
+        2,
     );
     gen::gen_gram(
         "./tmp/text/student",
@@ -42,9 +51,8 @@ fn main() {
         &jb,
         1,
     );
-    */
     gen::gen_total_gram("./data");
-     */
+    */
     /*
     let seq = [
         "qing hua da xue ji suan ji xi",

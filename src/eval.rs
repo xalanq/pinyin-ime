@@ -56,8 +56,12 @@ pub struct PinyinIME {
     gram_2: HashMap<(usize, usize), usize>,        // (w1, w)
     gram_3: HashMap<(usize, usize, usize), usize>, // (w2, w1, w)
     // gram_4: HashMap<(usize, usize, usize, usize), usize>,
+    sum_1: f64, // sum of gram_1
+    sum_2: f64, // sum of gram_2
+    sum_3: f64, // sum of gram_3
+    // sum_4: f64,                                  // sum of gram_4
     max_len: usize,
-    lambda: f64, // P(a|b) = (1-lambda) * P(a|b) + lambda * P(a)
+    lambda: f64, // P(a|b) = lambda * P(a|b) + (1.0 - lambda) * P(a)
 }
 
 struct State {
@@ -186,98 +190,51 @@ impl PinyinIME {
             // cnt += 1;
             let State { pos, w1, w2, prev: _ } = pool[idx];
             // let State { pos, w1, w2, w3, prev: _ } = pool[idx];
+
+            let fm_2 = if let Some(&fm) = self.gram_1.get(&w1) {
+                Some(self.sum_1 / self.sum_2 / fm as f64)
+            } else {
+                None
+            };
+            let fm_3 = if let Some(w2) = w2 {
+                if let Some(&fm) = self.gram_2.get(&(w2, w1)) {
+                    Some(self.sum_2 / self.sum_3 / fm as f64)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             pre[pos].iter().for_each(|candi| {
                 let (nxt, words) = candi;
                 let nxt = *nxt;
                 let mut probs: Vec<Option<f64>> = vec![None; words.len()];
 
-                let mut t1 = Vec::with_capacity(probs.len());
-                {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|w| {
-                        let t = match self.gram_1.get(w) {
-                            Some(&t) => t,
-                            None => 1,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    let sum = sum as f64;
-                    v.iter().for_each(|&t| {
-                        let p = lbd * t as f64 / sum;
-                        t1.push(p);
+                if let Some(fm) = fm_2 {
+                    words.iter().enumerate().for_each(|(i, &w)| {
+                        let t = *self.gram_2.get(&(w1, w)).unwrap_or(&0);
+                        let p = lbd * t as f64 * fm;
+                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
                     });
                 }
 
-                {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_2.get(&(w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
+                if let Some(fm) = fm_3 {
+                    words.iter().enumerate().for_each(|(i, &w)| {
+                        let t = *self.gram_3.get(&(w2.unwrap(), w1, w)).unwrap_or(&0);
+                        let p = lbd * t as f64 * fm;
+                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
                     });
-                    if sum > 0 {
-                        let sum = sum as f64;
-                        v.iter().enumerate().for_each(|(i, &t)| {
-                            if t > 0 {
-                                let p = (t1[i] + ilb * t as f64 / sum).ln();
-                                probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                            }
-                        });
+                }
+
+                words.iter().enumerate().for_each(|(i, w)| {
+                    if let Some(&t) = self.gram_1.get(w) {
+                        let p = ilb * t as f64 / self.sum_1;
+                        probs[i] = Some(probs[i].unwrap_or(0.0) + p);
                     }
-                }
-
-                if let Some(w2) = w2 {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_3.get(&(w2, w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    if sum > 0 {
-                        let sum = sum as f64;
-                        v.iter().enumerate().for_each(|(i, &t)| {
-                            let p = (t1[i] + ilb * t as f64 / sum).ln();
-                            probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                        });
+                    if let Some(ref mut p) = probs[i] {
+                        *p = p.ln();
                     }
-                }
-
-                t1.iter().enumerate().for_each(|(i, &p)| {
-                    let p = p.ln();
-                    probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
                 });
-
-                /*
-                if let Some(w3) = w3 {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_3.get(&(w3, w2, w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    let sum = sum as f64;
-                    v.iter().enumerate().for_each(|(i, &t)| {
-                        let p = iln + (t as f64 / sum).ln();
-                        if p > probs[i] {
-                            probs[i] = p;
-                        }
-                    });
-                }
-                */
 
                 words.iter().enumerate().for_each(|(i, &w)| {
                     if let Some(cp) = probs[i] {
@@ -317,7 +274,7 @@ impl PinyinIME {
             ws.iter()
                 .rev()
                 .for_each(|w| s.push_str(&load::word2hanzi(*w, &self.hanzi_v, &self.word_v)));
-            ans_s.push((s, st.p.exp()));
+            ans_s.push((s, st.p));
         });
         ans_s
     }
@@ -347,99 +304,59 @@ impl PinyinIME {
         while let Some(HeapState { p, idx }) = heap.pop() {
             // cnt += 1;
             let State { pos, w1, w2, prev: _ } = pool[idx];
+            if vis.contains(&(pos, w1, w2)) {
+                continue;
+            }
+            vis.insert((pos, w1, w2));
             // let State { pos, w1, w2, w3, prev: _ } = pool[idx];
+            let fm_2 = if let Some(&fm) = self.gram_1.get(&w1) {
+                Some(self.sum_1 / self.sum_2 / fm as f64)
+            } else {
+                None
+            };
+            /*
+            let fm_3 = if let Some(w2) = w2 {
+                if let Some(&fm) = self.gram_2.get(&(w2, w1)) {
+                    Some(self.sum_2 / self.sum_3 / fm as f64)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            */
             pre[pos].iter().for_each(|candi| {
                 let (nxt, words) = candi;
                 let nxt = *nxt;
                 let mut probs: Vec<Option<f64>> = vec![None; words.len()];
 
-                let mut t1 = Vec::with_capacity(probs.len());
-                {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|w| {
-                        let t = match self.gram_1.get(w) {
-                            Some(&t) => t,
-                            None => 1,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    let sum = sum as f64;
-                    v.iter().for_each(|&t| {
-                        let p = lbd * t as f64 / sum;
-                        t1.push(p);
+                if let Some(fm) = fm_2 {
+                    words.iter().enumerate().for_each(|(i, &w)| {
+                        let t = *self.gram_2.get(&(w1, w)).unwrap_or(&0);
+                        let p = lbd * t as f64 * fm;
+                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
                     });
                 }
-
-                {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_2.get(&(w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    if sum > 0 {
-                        let sum = sum as f64;
-                        v.iter().enumerate().for_each(|(i, &t)| {
-                            if t > 0 {
-                                let p = (t1[i] + ilb * t as f64 / sum).ln();
-                                probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                            }
-                        });
-                    }
-                }
-
-                if let Some(w2) = w2 {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_3.get(&(w2, w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    if sum > 0 {
-                        let sum = sum as f64;
-                        v.iter().enumerate().for_each(|(i, &t)| {
-                            let p = (t1[i] + ilb * t as f64 / sum).ln();
-                            probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                        });
-                    }
-                }
-
-                t1.iter().enumerate().for_each(|(i, &p)| {
-                    let p = p.ln();
-                    probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
-                });
 
                 /*
-                if let Some(w3) = w3 {
-                    let mut sum = 0;
-                    let mut v = Vec::with_capacity(words.len());
-                    words.iter().for_each(|&w| {
-                        let t = match self.gram_3.get(&(w3, w2, w1, w)) {
-                            Some(&t) => t,
-                            None => 0,
-                        };
-                        sum += t;
-                        v.push(t);
-                    });
-                    let sum = sum as f64;
-                    v.iter().enumerate().for_each(|(i, &t)| {
-                        let p = iln + (t as f64 / sum).ln();
-                        if p > probs[i] {
-                            probs[i] = p;
-                        }
+                if let Some(fm) = fm_3 {
+                    words.iter().enumerate().for_each(|(i, &w)| {
+                        let t = *self.gram_3.get(&(w2.unwrap(), w1, w)).unwrap_or(&0);
+                        let p = lbd * t as f64 * fm;
+                        probs[i] = Some(probs[i].as_ref().map_or(p, |g| g.max(p)));
                     });
                 }
                 */
+
+                words.iter().enumerate().for_each(|(i, w)| {
+                    if let Some(&t) = self.gram_1.get(w) {
+                        let p = ilb * t as f64 / self.sum_1;
+                        probs[i] = Some(probs[i].unwrap_or(0.0) + p);
+                    }
+                    if let Some(ref mut p) = probs[i] {
+                        *p = p.ln();
+                    }
+                });
 
                 words.iter().enumerate().for_each(|(i, &w)| {
                     if let Some(cp) = probs[i] {
@@ -448,13 +365,9 @@ impl PinyinIME {
                             if nxt == len {
                                 ans = Some(AnsState { p: np, w, prev: idx });
                             } else {
-                                let y = (nxt, w, Some(w1));
-                                if !vis.contains(&y) {
-                                    vis.insert(y);
-                                    let y = State { pos: nxt, w1: w, w2: y.2, prev: idx };
-                                    pool.push(y);
-                                    heap.push(HeapState { p: np, idx: pool.len() - 1 });
-                                }
+                                let y = State { pos: nxt, w1: w, w2: Some(w1), prev: idx };
+                                pool.push(y);
+                                heap.push(HeapState { p: np, idx: pool.len() - 1 });
                             }
                         }
                     }
@@ -476,14 +389,14 @@ impl PinyinIME {
         ws.iter()
             .rev()
             .for_each(|w| s.push_str(&load::word2hanzi(*w, &self.hanzi_v, &self.word_v)));
-        Some((s, st.p.exp()))
+        Some((s, st.p))
     }
 
     pub fn eval_from(&self, input_path: &str, answer_path: &str, output_path: &str) {
         println!("Predicting...");
         let s_time = time::Instant::now();
         let num = current_num_threads();
-        let max_lines = 10000;
+        let max_lines = 200;
         let input = File::open(input_path).expect(&format!("Cannot read {}", input_path));
         let reader = BufReader::with_capacity(1024 * 1024 * 32, input);
         let ans = File::open(answer_path).expect(&format!("Cannot read {}", answer_path));
@@ -493,10 +406,13 @@ impl PinyinIME {
         let mut tot = 0;
         let (mut sum_acc, mut sum_f1) = (0, 0.0);
         reader.max_lines(max_lines).zip(answer.max_lines(max_lines)).for_each(|(a, b)| {
+            if tot >= 2000 {
+                return;
+            }
             let slice: Vec<_> = a.into_iter().zip(b.into_iter()).enumerate().collect();
             let preds = Mutex::new(vec![String::new(); slice.len()]);
             let (a, b) = (Mutex::new(0), Mutex::new(0.0));
-            slice.par_chunks((max_lines + num - 1) / num).for_each(|lines| {
+            slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
                 let mut tmp_preds = Vec::with_capacity(lines.len());
                 let mut tmp_acc = 0;
                 let mut tmp_f1 = 0.0;
@@ -541,7 +457,7 @@ impl PinyinIME {
         println!("Predicting...");
         let s_time = time::Instant::now();
         let num = current_num_threads();
-        let max_lines = 10000;
+        let max_lines = 200;
         let input = File::open(input_path).expect(&format!("Cannot read {}", input_path));
         let reader = BufReader::with_capacity(1024 * 1024 * 32, input);
         let output = File::create(output_path).expect(&format!("Cannot open {}", output_path));
@@ -550,7 +466,7 @@ impl PinyinIME {
         reader.max_lines(max_lines).for_each(|slice| {
             let slice: Vec<_> = slice.into_iter().enumerate().collect();
             let preds = Mutex::new(vec![String::new(); slice.len()]);
-            slice.par_chunks((max_lines + num - 1) / num).for_each(|lines| {
+            slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
                 let mut tmp_preds = Vec::with_capacity(lines.len());
                 lines.iter().for_each(|(i, line)| {
                     if let Ok(line) = line {
@@ -577,22 +493,36 @@ impl PinyinIME {
     }
 
     pub fn new(config_path: &str) -> Self {
-        let lambda = load::load_config(config_path);
+        let (lambda, max_len) = load::load_config(config_path);
         let s_time = time::Instant::now();
 
-        println!("Initializing Pinyin IME (lambda: {})", lambda);
-        let max_len = 7;
+        println!("Initializing Pinyin IME (lambda: {}, max_len: {})", lambda, max_len);
         let (hanzi_v, hanzi_m) = load::load_hanzi("./data/hanzi.txt");
-        let (word_v, word_m, pinyin_m) = load::load_word("./data/word.txt", &hanzi_m);
+        let (word_v, word_m, _, pinyin_m) = load::load_word("./data/word.txt", &hanzi_m);
         let (gram_1, gram_2, gram_3) = load::load_gram("./data", &hanzi_m, &word_m);
         // let (gram_1, gram_2, gram_3, gram_4) = load::load_gram("./data", &hanzi_m, &word_m);
+        let sum_1 = gram_1.iter().map(|(_, v)| *v).sum::<usize>() as f64;
+        let sum_2 = gram_2.iter().map(|(_, v)| *v).sum::<usize>() as f64;
+        let sum_3 = gram_3.iter().map(|(_, v)| *v).sum::<usize>() as f64;
 
         let mils = (time::Instant::now() - s_time).as_millis();
         let mins = mils / 1000 / 60;
         let secs = mils / 1000 - mins * 60;
         println!("Done! Total cost {}m {}s.", mins, secs);
 
-        Self { hanzi_v, word_v, pinyin_m, gram_1, gram_2, gram_3, max_len, lambda }
-        // Self { hanzi_v, word_v, pinyin_m, gram_1, gram_2, gram_3, gram_4, max_len, lambda }
+        Self {
+            hanzi_v,
+            word_v,
+            pinyin_m,
+            gram_1,
+            gram_2,
+            gram_3,
+            sum_1,
+            sum_2,
+            sum_3,
+            max_len,
+            lambda,
+        }
+        // Self { hanzi_v, word_v, pinyin_m, sum_1, gram_1, gram_2, gram_3, gram_4, max_len, lambda }
     }
 }

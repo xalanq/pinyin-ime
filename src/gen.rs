@@ -3,6 +3,7 @@ use crate::max_lines::*;
 use jieba_rs::Jieba;
 use pbr::ProgressBar;
 use pinyin;
+use rand::{seq::SliceRandom, thread_rng};
 use rayon::current_num_threads;
 use rayon::prelude::*;
 use serde_json::Value;
@@ -39,7 +40,7 @@ fn gen_gram_one(
     let t3 = Mutex::new(HashMap::new());
     let t4 = Mutex::new(HashMap::new());
     it.for_each(|slice| {
-        slice.par_chunks((max_lines + num - 1) / num).for_each(|lines| {
+        slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
             let mut g1 = HashMap::new();
             let mut g2 = HashMap::new();
             let mut g3 = HashMap::new();
@@ -56,6 +57,7 @@ fn gen_gram_one(
                     ws.iter().map(|w| hanzi2word(*w, hanzi_m, word_m).unwrap()).collect();
                 // start
                 if sen.len() > 0 && sen[0] != 1 {
+                    *g1.entry(0).or_insert(0) += 1;
                     *g2.entry((0, sen[0])).or_insert(0) += 1;
                     if sen.len() > 1 && sen[1] != 1 {
                         *g3.entry((0, sen[0], sen[1])).or_insert(0) += 1;
@@ -387,7 +389,7 @@ pub fn gen_word(
     let mut ref_py = HashMap::new();
     fs::read_to_string(ref_path).expect(&format!("...Cannot read {}", ref_path)).lines().for_each(
         |line| {
-            let data: Vec<_> = line.split_whitespace().collect();
+            let mut data: Vec<_> = line.split_whitespace().collect();
             let mut valid = true;
             for c in data[0].chars() {
                 if hanzi_m.get(&c).is_none() {
@@ -396,6 +398,13 @@ pub fn gen_word(
                 }
             }
             if valid {
+                if data[2].contains("%") {
+                    data[2..].sort_by(|a, b| {
+                        let x: String = a.chars().filter(|c| c.is_digit(10) || *c == '.').collect();
+                        let y: String = b.chars().filter(|c| c.is_digit(10) || *c == '.').collect();
+                        y.parse::<f64>().unwrap().partial_cmp(&x.parse::<f64>().unwrap()).unwrap()
+                    })
+                }
                 data[2..].iter().for_each(|s| {
                     ref_py
                         .entry(data[0].to_string())
@@ -476,51 +485,146 @@ where
     println!("...Done!");
 }
 
+pub fn digit2chinese(s: &[char]) -> String {
+    let v: Vec<_> = s
+        .iter()
+        .map(|c| match *c {
+            '0' => '零',
+            '1' => '一',
+            '2' => '二',
+            '3' => '三',
+            '4' => '四',
+            '5' => '五',
+            '6' => '六',
+            '7' => '七',
+            '8' => '八',
+            '9' => '九',
+            _ => *c,
+        })
+        .collect();
+    let mut s = String::new();
+    macro_rules! p {
+        ( $($c:expr),+ ) => {{
+            $(
+                s.push($c);
+            )+
+        }};
+    }
+    if v.len() != 2 && v[0] == '零' {
+        v.iter().for_each(|c| p!(*c));
+    } else {
+        match v.len() {
+            1 => p!(v[0]),
+            2 => match v[0] {
+                '零' => p!(v[1]),
+                _ => {
+                    if v[0] != '一' {
+                        p!(v[0]);
+                    }
+                    p!('十');
+                    if v[1] != '零' {
+                        p!(v[1]);
+                    }
+                }
+            },
+            3 => {
+                p!(v[0], '百');
+                if v[1] == '零' {
+                    if v[2] != '零' {
+                        p!('零', v[2]);
+                    }
+                } else {
+                    p!(v[1], '十');
+                    if v[2] != '零' {
+                        p!(v[2]);
+                    }
+                };
+            }
+            _ => v.iter().for_each(|c| p!(*c)),
+        }
+    };
+    s
+}
+
 pub fn line_filter(s: &str, hanzi_m: &HashMap<char, usize>) -> String {
     let mut len = 0;
     let mut valid = false;
     let s: Vec<_> = s.chars().collect();
     let mut data = String::new();
     let mut i = 0;
-    while i < s.len() {
-        let mut c = s[i];
-        if c.is_digit(10) {
-            // use last digit
-            while i + 1 < s.len() && s[i + 1].is_digit(10) {
-                i += 1;
-            }
-            c = match s[i] {
-                '0' => '〇',
-                '1' => '一',
-                '2' => '二',
-                '3' => '三',
-                '4' => '四',
-                '5' => '五',
-                '6' => '六',
-                '7' => '七',
-                '8' => '八',
-                '9' => '九',
-                _ => s[i],
-            };
-        }
-        if let Some(_) = hanzi_m.get(&c) {
-            if len == 0 && valid {
-                data.push(' ');
-            }
-            valid = true;
-            data.push(c);
-            len += 1;
-        } else if c.is_alphabetic() {
-            if len == 0 && valid {
-                data.push(' ');
-            }
-            valid = true;
-            data.push('_'); // unknown
-            len += 1;
-        } else {
+    let mut upd = |cc: char| {
+        if !cc.is_alphanumeric()
+            && !"~@#$%^&*()_+{}|<>`-=[]'/￥…（）—“”《》·【】、‘’".contains(cc)
+        {
             len = 0;
+            return;
         }
+        let mut c = cc;
+        if hanzi_m.get(&c).is_none() {
+            c = '_';
+        }
+        if len == 0 && valid {
+            data.push(' ');
+        }
+        valid = true;
+        data.push(c);
+        len += 1;
+    };
+    while i < s.len() {
+        if s[i].is_digit(10) {
+            // use first and last digit
+            let mut j = i + 1;
+            while j < s.len() && s[j].is_digit(10) {
+                j += 1;
+            }
+            digit2chinese(&s[i..j]).chars().for_each(|c| upd(c));
+            i = j;
+            continue;
+        }
+        upd(s[i]);
         i += 1;
     }
     data
+}
+
+pub fn gen_dev(
+    path: &str,
+    input_path: &str,
+    answer_path: &str,
+    hanzi_m: &HashMap<char, usize>,
+    word_m: &HashMap<Vec<usize>, usize>,
+    pinyin_v: &Vec<Vec<String>>,
+    jb: &Jieba,
+) {
+    println!("Generating dev data");
+    println!("...Working on {}", path);
+    let input = fs::read_to_string(path).expect(&format!("......Cannot read {}", path));
+    let mut data = Vec::new();
+    let mut line_cnt = true;
+    input.lines().for_each(|line| {
+        if line_cnt {
+            line_cnt = false;
+            return;
+        }
+        line.split_whitespace().for_each(|ws| {
+            let cnt = ws.chars().count();
+            if ws.contains("_") || cnt < 5 || cnt > 20 {
+                return;
+            }
+            let v: Vec<_> = jb
+                .cut(&ws, false)
+                .iter()
+                .map(|w| pinyin_v[hanzi2word(w, hanzi_m, word_m).unwrap()][0].as_str())
+                .collect();
+            data.push((v.join("'").replace("'", " "), ws));
+        });
+    });
+    data.shuffle(&mut thread_rng());
+    let pinyin = data.iter().map(|a| a.0.as_str()).collect::<Vec<_>>();
+    let text = data.iter().map(|a| a.1).collect::<Vec<_>>();
+    let errmsg = &format!("...Cannot save to {}", input_path);
+    File::create(input_path).expect(errmsg).write_all(pinyin.join("\n").as_bytes()).expect(errmsg);
+    let errmsg = &format!("...Cannot save to {}", answer_path);
+    File::create(answer_path).expect(errmsg).write_all(text.join("\n").as_bytes()).expect(errmsg);
+    println!("...Done!")
 }

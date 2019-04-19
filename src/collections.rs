@@ -17,7 +17,7 @@ pub fn gen_sina(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char
     let data = Mutex::new(Vec::new());
     let count = Mutex::new(0);
     buf.max_lines(max_lines).for_each(|slice| {
-        slice.par_chunks((max_lines + num - 1) / num).for_each(|lines| {
+        slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
             let mut data_tmp = vec![];
             let mut count_tmp = 0;
             lines.iter().for_each(|line| {
@@ -65,7 +65,7 @@ pub fn gen_raw(path: &str, writer: &mut BufWriter<File>, hanzi_m: &HashMap<char,
     let data = Mutex::new(Vec::new());
     let count = Mutex::new(0);
     buf.max_lines(max_lines).for_each(|slice| {
-        slice.par_chunks((max_lines + num - 1) / num).for_each(|lines| {
+        slice.par_chunks((slice.len() + num - 1) / num).for_each(|lines| {
             let mut data_tmp = vec![];
             let mut count_tmp = 0;
             lines.iter().for_each(|line| {
