@@ -10,7 +10,7 @@ use std::env;
 fn main() {
     /*
     let (hanzi_v, hanzi_m) = load_hanzi("./data/hanzi.txt");
-    gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 1);
+    gen::gen_word("./tmp/word", "./tmp/word/dict.utf8", "./data/word.txt", &hanzi_m, 7);
     gen::gen_sen("./tmp/raw/sina", "./tmp/text/sina/sina.txt", &hanzi_m, col::gen_sina);
     gen::gen_sen("./tmp/raw/student", "./tmp/text/student/student.txt", &hanzi_m, col::gen_raw);
     gen::gen_sen("./tmp/raw/test", "./tmp/text/test/sina.txt", &hanzi_m, col::gen_sina);
