@@ -1,0 +1,252 @@
+﻿Loading config from ./data/cfg/char_1.json
+Initializing Pinyin IME (lambda: 0.00001, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.009
+f1:    0.503
+Total cost 0m 27s.
+Exit
+Loading config from ./data/cfg/char_2.json
+Initializing Pinyin IME (lambda: 0.01, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.166
+f1:    0.714
+Total cost 0m 27s.
+Exit
+Loading config from ./data/cfg/char_3.json
+Initializing Pinyin IME (lambda: 0.1, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.503
+f1:    0.878
+Total cost 0m 24s.
+Exit
+Loading config from ./data/cfg/char_4.json
+Initializing Pinyin IME (lambda: 0.25, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.588
+f1:    0.905
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/char_5.json
+Initializing Pinyin IME (lambda: 0.5, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 10s.
+Predicting
+Total lines: 3000
+acc:   0.632
+f1:    0.916
+Total cost 0m 20s.
+Exit
+Loading config from ./data/cfg/char_6.json
+Initializing Pinyin IME (lambda: 0.75, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.656
+f1:    0.921
+Total cost 0m 18s.
+Exit
+Loading config from ./data/cfg/char_7.json
+Initializing Pinyin IME (lambda: 0.9, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 10s.
+Predicting
+Total lines: 3000
+acc:   0.667
+f1:    0.924
+Total cost 0m 17s.
+Exit
+Loading config from ./data/cfg/char_8.json
+Initializing Pinyin IME (lambda: 0.99, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 10s.
+Predicting
+Total lines: 3000
+acc:   0.672
+f1:    0.925
+Total cost 0m 15s.
+Exit
+Loading config from ./data/cfg/char_9.json
+Initializing Pinyin IME (lambda: 0.99999, max_len: 1)
+Loading hanzi from ./data/char/hanzi.txt
+Loading word from ./data/char/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 9s.
+Predicting
+Total lines: 3000
+acc:   0.665
+f1:    0.922
+Total cost 0m 12s.
+Exit
+Loading config from ./data/cfg/word_1.json
+Initializing Pinyin IME (lambda: 0.00001, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 16s.
+Predicting
+Total lines: 3000
+acc:   0.512
+f1:    0.887
+Total cost 0m 27s.
+Exit
+Loading config from ./data/cfg/word_2.json
+Initializing Pinyin IME (lambda: 0.01, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 16s.
+Predicting
+Total lines: 3000
+acc:   0.623
+f1:    0.914
+Total cost 0m 26s.
+Exit
+Loading config from ./data/cfg/word_3.json
+Initializing Pinyin IME (lambda: 0.1, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.655
+f1:    0.922
+Total cost 0m 24s.
+Exit
+Loading config from ./data/cfg/word_4.json
+Initializing Pinyin IME (lambda: 0.25, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 16s.
+Predicting
+Total lines: 3000
+acc:   0.664
+f1:    0.925
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/word_5.json
+Initializing Pinyin IME (lambda: 0.5, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.674
+f1:    0.928
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/word_6.json
+Initializing Pinyin IME (lambda: 0.75, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.678
+f1:    0.929
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/word_7.json
+Initializing Pinyin IME (lambda: 0.9, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.678
+f1:    0.930
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/word_8.json
+Initializing Pinyin IME (lambda: 0.99, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.675
+f1:    0.928
+Total cost 0m 22s.
+Exit
+Loading config from ./data/cfg/word_9.json
+Initializing Pinyin IME (lambda: 0.99999, max_len: 7)
+Loading hanzi from ./data/word/hanzi.txt
+Loading word from ./data/word/word.txt
+Loading gram 1
+Loading gram 3
+Pre-processing
+Done! Total cost 0m 15s.
+Predicting
+Total lines: 3000
+acc:   0.670
+f1:    0.924
+Total cost 0m 22s.
+Exit

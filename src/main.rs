@@ -5,7 +5,7 @@ use pinyin_ime::gen;
 use pinyin_ime::load::*;
 */
 use pinyin_ime::eval::PinyinIME;
-// use std::env;
+use std::env;
 
 fn main() {
     /*
@@ -48,6 +48,7 @@ fn main() {
     );
     gen::gen_total_gram("./data");
     */
+    /*
     for c in ["char", "word"].iter() {
         let data_path = &format!("./data/{}", c);
         for i in 1..=9 {
@@ -57,7 +58,7 @@ fn main() {
             ime.eval_from("./tmp/text/test/input.txt", "./tmp/text/test/answer.txt", output_path);
         }
     }
-    /*
+    */
     let ime = PinyinIME::new("./data/config.json", "./data");
     match env::args().len() {
         3 => {
@@ -71,6 +72,7 @@ fn main() {
             let answer = env::args().nth(3).unwrap();
             ime.eval_from(&input, &answer, &output);
         }
+        /*
         2 => {
             let k = env::args()
                 .nth(1)
@@ -108,6 +110,7 @@ fn main() {
                 println!("Exit. Good luck!");
             }
         }
+        */
         _ => {
             println!("请尽情输入拼音: ");
             let mut input = String::new();
@@ -124,5 +127,4 @@ fn main() {
             println!("Exit. Good luck!");
         }
     };
-    */
 }
